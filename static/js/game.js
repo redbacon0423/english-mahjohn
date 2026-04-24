@@ -600,12 +600,12 @@ function updateActionUI() {
         const isMyTurn = (gameState.current_turn === myIndex);
         const isWaitingForMe = (gameState.state === 'WAITING_ACTION' && gameState.current_turn === myIndex);
 
-        // Show HU button whenever it's my turn (NORMAL draw turn OR WAITING_ACTION)
-        if (isMyTurn) {
+        // 🎯 Show HU button ONLY when server detects the hand can win
+        if (isMyTurn && gameState.can_hu) {
             const huBtn = document.createElement('button');
             huBtn.id = 'btn-hu';
-            huBtn.className = 'action-btn hu';
-            huBtn.innerText = 'HU (WIN)';
+            huBtn.className = 'action-btn hu hu-glow';
+            huBtn.innerText = '🀄 HU (WIN)';
             huBtn.onclick = () => {
                 if (isDrawing) return;
                 showCustomInput(`Enter the words in your hand (separate with spaces):`, (words) => {

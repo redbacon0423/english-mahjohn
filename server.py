@@ -1251,7 +1251,8 @@ def get_game_state(game, sid, include_hands=None):
         'my_hand': [],
         'is_spectator': is_spectator,
         'is_performance_mode': getattr(game, 'is_performance_mode', False), # 🚀 Sync flag to frontend
-        'room_id': getattr(game, 'room_id', 'unknown')
+        'room_id': getattr(game, 'room_id', 'unknown'),
+        'can_hu': False  # 🎯 HU detection flag
     }
     
     for i, p in enumerate(game.players):
@@ -1284,10 +1285,49 @@ def get_game_state(game, sid, include_hands=None):
             # 🛡️ Chi-Hiding: Mask options in detailed player info too
             player_info['chi_options'] = len(game.get_chi_options(i)) > 0
             if p.get('sid') == sid:
-                state['my_hand'] = p.get('hand', [])  
+                state['my_hand'] = p.get('hand', [])
+                
+                # 🎯 HU Detection: Check if this player's hand can win
+                if game.game_started and game.current_turn == i:
+                    state['can_hu'] = _check_can_hu(game, i)
             
         state['players'].append(player_info)
     return state
+
+
+def _check_can_hu(game, player_index):
+    """🎯 Check if a player's hand can be fully decomposed into valid words."""
+    try:
+        player = game.players[player_index]
+        hand = player.get('hand', [])
+        
+        # No tiles = can't hu (unless pure meld win)
+        if not hand:
+            return bool(player.get('melds'))
+        
+        letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
+        items_count = len([t for t in hand if isinstance(t, dict) and t.get('type') == 'item'])
+        
+        # 🎯 In WAITING_ACTION, include the discarded tile (Ron/discard Hu)
+        if getattr(game, 'state', 'NORMAL') == 'WAITING_ACTION' and game.last_discard:
+            if game.last_discard.get('player_index') != player_index:
+                tile = game.last_discard.get('tile', {})
+                if isinstance(tile, dict):
+                    if tile.get('type') == 'letter':
+                        letters.append(tile.get('value', '').lower())
+                    elif tile.get('type') == 'item':
+                        items_count += 1
+        
+        if len(letters) < 2:
+            return False
+        
+        # Use AI_find_hu_partition with full dictionary (no vocab limit)
+        result = game.AI_find_hu_partition(letters, items_count, vocab_limit=999999)
+        return result is not None
+    except Exception as e:
+        dprint(f"DEBUG: [CAN_HU] Error checking hu for player {player_index}: {e}")
+        return False
+
 
 
 def broadcast_game_state(game):
