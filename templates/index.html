@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>English Mahjong | Competitive Word Game</title>
+    <!-- Update version to v41 -->
+    <link rel="stylesheet" href="/static/css/style.css?v=41">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Outfit:wght@400;700;900&family=Orbitron:wght@400;700;900&family=Roboto+Mono&display=swap"
+        rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+</head>
+
+<body class="">
+    <div id="floating-words-container"
+        style="pointer-events: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; overflow: hidden; z-index: 50;">
+    </div>
+    <div id="fx-layer" style="pointer-events: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 100000; overflow: hidden;"></div>
+
+    <div id="app">
+        <!-- Main Menu -->
+        <div id="menu-overlay" class="overlay">
+            <div class="modal main-menu-modal">
+                <h1 class="menu-title">ENGLISH MAHJONG</h1>
+                <div class="menu-options-container">
+
+
+
+                    <button class="menu-btn primary-btn" onclick="showJoin('host')">📺 HOST MODE / TV ROOM</button>
+                    <button class="menu-btn primary-btn" onclick="startPerformanceMode()">📺 PERFORMANCE MODE (AI vs AI)</button>
+                    <button class="menu-btn primary-btn" onclick="startSinglePlayer()">👤 SINGLE PLAYER PRACTICE</button>
+                    <button class="menu-btn secondary-btn" onclick="toggleRules()">玩法說明</button>
+
+                    <div id="ai-settings" class="ai-settings-panel">
+                        <span class="ai-settings-label">AI DIFFICULTY</span>
+                        <div class="ai-select-wrapper">
+                            <select id="ai-difficulty-select" class="ai-select">
+                                <option value="easy">Beginner</option>
+                                <option value="normal" selected>Intermediate</option>
+                                <option value="hard">Advanced</option>
+                                <option value="nightmare">Ultimate</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Join Room Overlay (Moved to Main Menu) -->
+
+
+        <!-- Rules Overlay -->
+        <div id="rules-overlay" class="overlay hidden">
+            <div class="modal rules-modal">
+                <h2 style="color: var(--neon-pink);">英文字母麻將 | 遊戲規則</h2>
+                <div class="rules-content"
+                    style="text-align: left; max-height: 50vh; overflow-y: auto; margin: 20px 0; padding-right: 10px; line-height: 1.8;">
+                    <h3 style="color: var(--neon-blue); border-bottom: 1px solid rgba(0,242,255,0.2); padding-bottom: 5px;">核心玩法</h3>
+                    <p>1. <b>遊戲開始：</b>每位玩家初始手持 <b>16 張字母牌</b>。玩家輪流進行摸牌與出牌。</p>
+                    <p>2. <b>吃牌 (CHI)：</b>當上家打出的牌能與您的手牌湊成一個<b>有效的英文單字</b>時，即可進行吃牌。</p>
+                    <p>3. <b>胡牌 (WIN)：</b>將手上的 16 張牌全部組合成<b>英文單字</b>即可獲勝！</p>
+                    <p>4. <b>單字限制：</b>禁止使用<b>專有名詞</b>（如人名、地名、品牌）、<b>非正式縮寫</b>或<b>單個字母</b>。</p>
+                    <p>5. <b>AI 難度：</b>AI 的詞彙量是從總字庫中<b>隨機抽樣</b>計算的（0.025% - 0.1%）。每次行動 AI 都會隨機「想起」一部分單字，難度越高抽到的字數越多。</p>
+                </div>
+                <button class="primary-btn" onclick="toggleRules()">我明白了</button>
+            </div>
+        </div>
+
+
+
+        <!-- Waiting HUD (Non-blocking) -->
+        <div id="waiting-overlay" class="waiting-hud hidden">
+            <div class="hud-panel">
+                <div class="hud-header">
+                    <div class="room-id-display-large"><span style="font-size: 0.3em; opacity: 0.6; display: block;">ROOM ID</span><span class="room-id-display"></span></div>
+                </div>
+
+                <div class="hud-body">
+                    <div class="hud-qr">
+                        <img class="qr-code-img" src="" alt="Invite QR">
+                    </div>
+
+                    <div class="hud-status">
+                        <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 10px;">
+                            <h3 style="margin: 0;">WAITING FOR PLAYERS...</h3>
+                        </div>
+                        <div id="player-list" class="hud-player-list"></div>
+                    </div>
+                </div>
+                <div class="hud-footer">
+                    <div style="display: flex; gap: 12px; margin-bottom: 15px;">
+                        <button id="start-btn" class="start-btn" style="flex: 1.5; font-size: 18px; padding: 12px; letter-spacing: 2px;">START GAME</button>
+                    </div>
+                    <p style="font-size: 11px; color: #94a3b8; letter-spacing: 1px; opacity: 0.8;">SCAN QR OR ID TO JOIN ROOM</p>
+                </div>
+            </div>
+        </div>
+
+
+
+        <!-- Spectator Controls -->
+        <div id="spectator-controls" class="spectator-controls hidden">
+            <div class="control-group">
+                <span class="control-label">REVEAL ALL HANDS</span>
+                <label class="switch">
+                    <input type="checkbox" id="reveal-hands-toggle" onchange="toggleRevealHands()">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            <div class="control-group">
+                <span class="control-label">AI INTERVAL (SEC)</span>
+                <input type="range" id="ai-interval-slider" min="0.5" max="10.0" step="0.5" value="5.0" oninput="this.nextElementSibling.innerText = this.value + 's'; window.updateAIInterval(this.value);">
+                <span class="control-value">5.0s</span>
+            </div>
+        </div>
+
+        
+
+        
+
+
+        <!-- Game Table Area -->
+        <div class="table-area">
+            <div class="zone zone-top">
+                <div class="player-pos pos-top" id="zone-top">
+                    <div id="name-top" class="player-name"></div>
+                    <div id="hand-top" class="hand"></div>
+                    <div id="melds-top" class="melds"></div>
+                </div>
+            </div>
+            <div class="zone-middle">
+                <div class="zone zone-left">
+                    <div class="player-pos pos-left" id="zone-left">
+                        <div id="name-left" class="player-name"></div>
+                        <div id="hand-left" class="hand vertical"></div>
+                        <div id="melds-left" class="melds"></div>
+                    </div>
+                </div>
+                <div class="mahjong-table" id="table">
+                    <div class="wall-container">
+                        <div class="wall-side wall-side-bottom" id="wall-bottom"></div>
+                        <div class="wall-side wall-side-right" id="wall-right"></div>
+                        <div class="wall-side wall-side-top" id="wall-top"></div>
+                        <div class="wall-side wall-side-left" id="wall-left"></div>
+                    </div>
+                    <div class="river-container">
+                        <div id="discard-top" class="discard-pile-pos discard-top"></div>
+                        <div id="discard-right" class="discard-pile-pos discard-right"></div>
+                        <div id="discard-bottom" class="discard-pile-pos discard-bottom"></div>
+                        <div id="discard-left" class="discard-pile-pos discard-left"></div>
+                    </div>
+                </div>
+                <div class="zone zone-right">
+                    <div class="player-pos pos-right" id="zone-right">
+                        <div id="name-right" class="player-name"></div>
+                        <div id="hand-right" class="hand vertical"></div>
+                        <div id="melds-right" class="melds"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="zone zone-bottom">
+                <div class="player-pos pos-bottom" id="zone-bottom">
+                    <div id="name-bottom" class="player-name"></div>
+                    <div id="hand-bottom" class="hand"></div>
+                    <div id="melds-bottom" class="melds"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Controls -->
+        <div id="action-container" class="action-container hidden"></div>
+
+        <!-- Table Start Button (Floating when lobby is hidden) -->
+        <div id="table-start-overlay" class="table-start-overlay hidden">
+            <div class="lobby-status-mini">WAITING FOR PLAYERS...</div>
+            <button id="table-start-btn" class="start-btn" style="padding: 15px 40px; font-size: 20px; box-shadow: 0 0 30px var(--neon-blue);">START GAME</button>
+        </div>
+
+
+
+        <div id="toast" class="toast hidden"></div>
+
+        <!-- Result Overlay -->
+        <div id="result-overlay" class="overlay hidden">
+            <div class="modal result-modal victory-burst">
+                <div class="victory-icon">🏆</div>
+                <h1 id="winner-title" class="victory-title">WINNER!</h1>
+                <h2 id="winner-name" style="color: var(--neon-blue); font-family: 'Orbitron'; font-size: 1.5rem; margin-top: -10px;"></h2>
+                <div style="margin: 20px 0; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+                    <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;">WINNING COMBINATION</p>
+                    <div id="winner-melds" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; white-space: nowrap;"></div>
+                </div>
+                <div id="winner-hand" class="hand" style="justify-content: center; margin: 20px 0; opacity: 0.8;"></div>
+                <button class="menu-btn" onclick="location.reload()" style="margin-top: 30px; background: var(--neon-blue); box-shadow: 0 0 20px var(--neon-blue);">RETURN TO LOBBY</button>
+            </div>
+        </div>
+        <!-- Custom Input Overlay -->
+        <div id="input-overlay" class="overlay hidden" style="z-index: 2000;">
+            <div class="modal input-modal">
+                <h2 id="input-title" style="color: var(--neon-pink); margin-bottom: 15px;">INPUT TEXT</h2>
+                <input type="text" id="custom-input-field" style="width: 100%; padding: 10px; font-size: 1.2rem; background: #000; color: #fff; border: 2px solid var(--neon-blue); border-radius: 8px; margin-bottom: 20px; font-family: 'Orbitron', sans-serif; text-transform: uppercase;">
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button id="input-confirm-btn">Confirm</button>
+                    <button class="secondary" onclick="hideCustomInput()">Cancel</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Chat System -->
+        <div id="chat-container">
+            <div id="chat-header">
+                <span>💬 CHAT ROOM</span>
+                <button id="chat-toggle-btn" onclick="toggleChat()">–</button>
+            </div>
+            <div id="chat-messages"></div>
+            <div class="chat-input-area">
+                <input type="text" id="chat-input" placeholder="Say something...">
+                <button id="chat-send-btn">Send</button>
+            </div>
+        </div>
+        
+    </div>
+
+    <script>
+        const SERVER_LOCAL_IP = "{{ local_ip }}";
+    </script>
+    <script src="/static/js/game.js?v=39"></script>
+</body>
+
+
+</html>
