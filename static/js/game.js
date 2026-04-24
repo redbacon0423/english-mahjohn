@@ -290,7 +290,7 @@ function actuallyRenderBoard() {
                 nameEl.style.opacity = "1";
                 nameEl.classList.remove('hidden');
                 // 🕒 Numeric Timer (Only visible to the ACTIVE local player OR host/TV)
-                const isMyHand = (index === effectiveMyIdx);
+                const isMyHand = (!isSpectator && index === effectiveMyIdx);
                 const canSeeHand = player.hand && (isMyHand || (isSpectator && showHands));
 
                 if (gameState.current_turn === index && (isMyHand || isSpectator)) {
