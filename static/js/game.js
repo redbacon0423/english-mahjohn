@@ -792,10 +792,17 @@ document.getElementById('custom-input-field')?.addEventListener('keypress', (e) 
 
 function updateDynamicQR() {
     const qrImgs = document.querySelectorAll('.qr-code-img');
-    // 🌐 Use the server's LAN IP if available, falling back to window.location.origin
-    const host = (typeof SERVER_LOCAL_IP !== 'undefined' && SERVER_LOCAL_IP && SERVER_LOCAL_IP !== '127.0.0.1') 
-                 ? `http://${SERVER_LOCAL_IP}:${window.location.port || 5001}` 
-                 : window.location.origin;
+    
+    // 🌐 Smart Host Detection:
+    // 1. If we are on a real domain (not localhost), use the current browser origin.
+    // 2. Otherwise, fallback to the SERVER_LOCAL_IP (useful for LAN exhibition).
+    let host = window.location.origin;
+    
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocal && typeof SERVER_LOCAL_IP !== 'undefined' && SERVER_LOCAL_IP && SERVER_LOCAL_IP !== '127.0.0.1') {
+        host = `http://${SERVER_LOCAL_IP}:${window.location.port || 5001}`;
+    }
+    
     const url = `${host}?room=${roomID}`;
     qrImgs.forEach(img => img.src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(url)}`);
     document.querySelectorAll('.room-id-display').forEach(el => el.innerText = roomID);
