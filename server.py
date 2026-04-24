@@ -12,8 +12,20 @@ from google import genai # type: ignore
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'majan_secret!'
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable static file caching
-# 💡 Ultimate anti-lock: Force threading mode to ensure AI operations never block the frontend actions
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+
+# 💡 Auto-detect async mode: Use eventlet on Render (production), threading for local dev
+def _detect_async_mode():
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+        print("✅ Using eventlet async mode (production)")
+        return 'eventlet'
+    except ImportError:
+        print("ℹ️ Using threading async mode (local dev)")
+        return 'threading'
+
+_async_mode = _detect_async_mode()
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_async_mode)
 
 @app.after_request
 def add_no_cache(response):

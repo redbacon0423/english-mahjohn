@@ -537,6 +537,18 @@ body {
 
 .spectator-mode .player-name {
     transition: none !important;
+    pointer-events: none; /* 🚀 Prevent name labels from blocking tile interactions */
+    z-index: 1 !important; /* 🚀 Keep names behind tiles */
+    padding: 0.6vmin 1.5vmin !important;
+    font-size: 0.9em;
+}
+
+.spectator-mode .p-name {
+    font-size: 1.4vmin !important;
+}
+
+.spectator-mode .p-meta {
+    font-size: 0.9vmin !important;
 }
 
 .discard-right .tile.small {
