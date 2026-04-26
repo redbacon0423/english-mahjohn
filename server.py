@@ -151,7 +151,7 @@ class EnglishMahjongGame:
         self.current_turn = 0
         self.state = 'WAITING'
         self.demo_mode = False 
-        self.ai_interval = 1.5 
+        self.ai_interval = 5.0 
         self.current_chi_options = {} # 🚀 Fix: Initialize to prevent crash in lobby
         self.hu_reservations = {}  # 🀄 預約胡牌: {player_index: [word1, word2, ...]}
 
@@ -1017,6 +1017,7 @@ def on_start_demo(data=None):
     
     game = games[room_id]
     game.demo_mode = True
+    game.ai_interval = 1.5  # 🚀 Performance Mode needs to be fast
     sid_to_room[request.sid] = room_id
     
     # Clear existing players and add 4 AI
@@ -1391,7 +1392,7 @@ def process_ai_action(game, ai_index):
             if options and should_chi:
                 # 🤖 AI intelligently chooses words matching restriction (using fast_check to avoid deep thinking)
                 is_nightmare = (player.get('difficulty') == 'nightmare')
-                valid_options = [w for w in options if game.validate_word(w, fast_check=True) and (w.lower() in ai_known_words)]
+                valid_options = [w for w in options if game.validate_word(w, fast_check=True)]
                 
                 # 🌙 Nightmare Mode Filter: Exclude proper nouns
                 # (Already filtered globally from dictionary)

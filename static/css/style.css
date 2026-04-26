@@ -2648,3 +2648,39 @@ body.controller-mode .timer-val {
     from { opacity: 0; transform: translateY(20px); }
     to { opacity: 1; transform: translateY(0); }
 }
+
+/* Timer Floating Element */
+.timer-floating {
+    position: absolute;
+    top: -50px;
+    right: 0;
+    background: rgba(0, 0, 0, 0.8);
+    border: 2px solid var(--neon-blue);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 15px var(--neon-blue);
+    z-index: 100;
+}
+
+.timer-floating.urgent {
+    border-color: var(--neon-pink);
+    box-shadow: 0 0 15px var(--neon-pink);
+    animation: pulse-urgent 1s infinite;
+}
+
+@keyframes pulse-urgent {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); box-shadow: 0 0 25px var(--neon-pink); }
+    100% { transform: scale(1); }
+}
+
+.timer-val {
+    font-family: 'Orbitron', sans-serif;
+    color: #fff;
+    font-weight: bold;
+    font-size: 16px;
+}
