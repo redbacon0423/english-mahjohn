@@ -2666,6 +2666,11 @@ body.controller-mode .timer-val {
     z-index: 100;
 }
 
+.zone-top .timer-floating {
+    top: unset;
+    bottom: -50px;
+}
+
 .timer-floating.urgent {
     border-color: var(--neon-pink);
     box-shadow: 0 0 15px var(--neon-pink);
