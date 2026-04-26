@@ -1033,8 +1033,10 @@ body.mobile-mode .zone-right {
 }
 
 body.mobile-mode .action-container {
-    bottom: 30vh;
-    transform: translateX(-50%) scale(1.2);
+    bottom: 28vh;
+    transform: translateX(-50%) scale(1.1);
+    max-width: 95vw;
+    min-width: 85vw;
 }
 
 body.mobile-mode {
@@ -1081,16 +1083,20 @@ body.mobile-mode {
 /* ACTION CONTAINER for CHI/SKIP */
 .action-container {
     position: fixed;
-    bottom: 22vh;
+    bottom: 17vh;
     left: 50%;
     transform: translateX(-50%);
     background: rgba(5, 12, 35, 0.88);
     padding: 2vmin 3.5vmin;
-    border-radius: 5vmin;
+    border-radius: 2.5vmin;
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-top: 1px solid rgba(255, 255, 255, 0.12);
     display: flex;
-    gap: 2.5vmin;
+    flex-direction: column;
+    gap: 1.5vmin;
+    align-items: center;
+    min-width: 40vmin;
+    max-width: 80vmin;
     z-index: 2000;
     box-shadow: 
         0 30px 60px rgba(0, 0, 0, 0.8),
@@ -1100,6 +1106,7 @@ body.mobile-mode {
     backdrop-filter: blur(20px);
     animation: action-slide-up 0.4s cubic-bezier(0.17, 0.89, 0.32, 1.49);
 }
+
 
 @keyframes action-slide-up {
     from { transform: translateX(-50%) translateY(50px); opacity: 0; }
@@ -1173,6 +1180,75 @@ body.mobile-mode {
     background: linear-gradient(135deg, #475569, #334155);
 }
 
+/* 🀄 HU RESERVATION PANEL */
+.hu-reserve-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1vmin;
+    width: 100%;
+}
+
+.hu-reserve-status {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.5vmin;
+    color: #64748b;
+    letter-spacing: 0.1em;
+    text-align: center;
+    padding: 0.5vmin 1vmin;
+    border-radius: 1vmin;
+    background: rgba(0,0,0,0.2);
+    transition: all 0.3s ease;
+}
+
+.hu-reserve-status.active {
+    color: var(--neon-gold);
+    text-shadow: 0 0 8px rgba(255, 215, 0, 0.6);
+    background: rgba(255, 215, 0, 0.08);
+    border: 1px solid rgba(255, 215, 0, 0.25);
+    animation: reserve-pulse 2s infinite ease-in-out;
+}
+
+@keyframes reserve-pulse {
+    0%, 100% { box-shadow: 0 0 5px rgba(255, 215, 0, 0.2); }
+    50% { box-shadow: 0 0 15px rgba(255, 215, 0, 0.5); }
+}
+
+.hu-reserve-input-row {
+    display: flex;
+    gap: 1.5vmin;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.hu-reserve-input {
+    flex: 1;
+    min-width: 150px;
+    padding: 1.2vmin 2vmin;
+    font-size: 1.8vmin;
+    font-family: 'Orbitron', sans-serif;
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    border: 1px solid rgba(255, 215, 0, 0.4);
+    border-radius: 1vmin;
+    outline: none;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    transition: all 0.3s ease;
+}
+
+.hu-reserve-input:focus {
+    border-color: var(--neon-gold);
+    box-shadow: 0 0 12px rgba(255, 215, 0, 0.35);
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.hu-reserve-input::placeholder {
+    color: #475569;
+    font-size: 1.4vmin;
+    text-transform: none;
+    letter-spacing: 0;
+}
 
 /* TOAST */
 .toast {
@@ -2442,15 +2518,18 @@ body.controller-mode .pos-bottom .meld-group .tile {
 
 /* Controller Actions */
 body.controller-mode .action-container {
-    bottom: 5vh;
-    width: 90vw;
-    padding: 20px;
+    bottom: 12vh; /* 🚀 Moved up to avoid system bars/notches */
+    width: 92vw;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 15px;
     display: flex;
     justify-content: space-around;
-    gap: 15px;
-    background: rgba(15, 23, 42, 0.9);
+    gap: 12px;
+    background: rgba(15, 23, 42, 0.95);
     border: 2px solid var(--neon-blue);
-    box-shadow: 0 0 30px rgba(0, 242, 255, 0.2);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 242, 255, 0.3);
+    border-radius: 20px;
 }
 
 body.controller-mode .action-btn {
@@ -2473,3 +2552,99 @@ body.controller-mode .timer-val {
     font-size: 15vw;
 }
 
+
+
+/* --- Artistic Meld Animation (CHI/HU) --- */
+.meld-anim-overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 100000;
+    pointer-events: none;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100vw;
+    height: 100vh;
+}
+
+.meld-artistic-text {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 15vmin;
+    letter-spacing: 2vmin;
+    text-transform: uppercase;
+    line-height: 1;
+    margin: 1vmin 0;
+}
+
+.chi-text {
+    background: linear-gradient(to bottom, #fff 20%, #ffd700 50%, #ff8c00 80%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 0 30px rgba(255, 215, 0, 0.6));
+    animation: meld-artistic-enter 2.5s cubic-bezier(0.17, 0.89, 0.32, 1.49) forwards;
+}
+
+.hu-text {
+    background: linear-gradient(to bottom, #fff 20%, #ff2d78 50%, #bc13fe 80%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 0 40px rgba(255, 45, 120, 0.8));
+    animation: meld-artistic-enter-hu 2.5s cubic-bezier(0.17, 0.89, 0.32, 1.49) forwards;
+}
+
+.meld-player-name-banner {
+    font-size: 4vmin;
+    color: var(--neon-blue);
+    text-shadow: 0 0 15px var(--neon-blue);
+    margin-bottom: -3vmin;
+    font-family: 'Orbitron';
+    font-weight: 900;
+    opacity: 0;
+    animation: meld-fade-in 0.5s 0.2s forwards;
+    letter-spacing: 0.5vmin;
+}
+
+.meld-word-display {
+    font-size: 6vmin;
+    color: #fff;
+    margin-top: 1vmin;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 1.5vmin 6vmin;
+    border-radius: 6vmin;
+    border: 3px solid var(--neon-blue);
+    box-shadow: 
+        0 0 30px rgba(0, 212, 255, 0.5),
+        inset 0 0 15px rgba(0, 212, 255, 0.2);
+    font-family: 'Orbitron';
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.8vmin;
+    opacity: 0;
+    animation: meld-fade-in 0.5s 0.4s forwards;
+}
+
+@keyframes meld-artistic-enter {
+    0% { transform: scale(0) rotate(-15deg); opacity: 0; filter: blur(20px); }
+    15% { transform: scale(1.2) rotate(0deg); opacity: 1; filter: blur(0px); }
+    80% { transform: scale(1) rotate(0deg); opacity: 1; }
+    100% { transform: scale(1.6); opacity: 0; filter: blur(10px); }
+}
+
+@keyframes meld-artistic-enter-hu {
+    0% { transform: scale(0) rotate(15deg); opacity: 0; filter: blur(20px); }
+    15% { transform: scale(1.4) rotate(0deg); opacity: 1; filter: blur(0px); }
+    30% { transform: scale(1.1) rotate(-5deg); }
+    45% { transform: scale(1.2) rotate(5deg); }
+    80% { transform: scale(1) rotate(0deg); opacity: 1; }
+    100% { transform: scale(2); opacity: 0; filter: blur(15px); }
+}
+
+@keyframes meld-fade-in {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}

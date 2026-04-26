@@ -18,10 +18,10 @@ def _detect_async_mode():
     try:
         import eventlet
         eventlet.monkey_patch()
-        print("✅ Using eventlet async mode (production)")
+        print("[OK] Using eventlet async mode (production)")
         return 'eventlet'
     except ImportError:
-        print("ℹ️ Using threading async mode (local dev)")
+        print("[INFO] Using threading async mode (local dev)")
         return 'threading'
 
 _async_mode = _detect_async_mode()
@@ -92,19 +92,19 @@ if os.path.exists(freq_path):
 THEMES = []
 
 def get_local_ip():
+    # 🚀 ONLY use Render URL if specifically in a Render environment
+    if os.environ.get('RENDER'):
+        return "english-mahjohn.onrender.com"
+        
     try:
         # Try to get the IP used for external traffic
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
-        return ip
+        return f"{ip}:5001"
     except:
-        # Fallback to hostname-based detection
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except:
-            return "127.0.0.1"
+        return "localhost:5001"
 
 LOCAL_IP = get_local_ip()
 print(f" * Server running on LAN: http://{LOCAL_IP}:5001")
@@ -153,6 +153,7 @@ class EnglishMahjongGame:
         self.demo_mode = False 
         self.ai_interval = 5.0 
         self.current_chi_options = {} # 🚀 Fix: Initialize to prevent crash in lobby
+        self.hu_reservations = {}  # 🀄 預約胡牌: {player_index: [word1, word2, ...]}
 
     def set_dictionary(self, dictionary: list[str]):
         self.dictionary = set(dictionary)
@@ -200,7 +201,8 @@ class EnglishMahjongGame:
                 'melds': [], 
                 'vocab_limit': vocab_limit or 999999,
                 'bank_time': 60.0,
-                'turn_time': 20.0
+                'turn_time': 20.0,
+                'can_hu': False  # 🚀 Performance Cache
             })
             # Log player join
             dprint(f"DEBUG: [GAME] Player {name} joined.")
@@ -215,6 +217,7 @@ class EnglishMahjongGame:
         self.discard_piles = [[] for _ in range(len(self.players))]
         self.last_discard = None
         self.current_chi_options = {}
+        self.hu_reservations = {}  # 🀄 Clear reservations on new game
         
         for p in self.players:
             p['hand'] = []
@@ -228,6 +231,11 @@ class EnglishMahjongGame:
         self.game_started = True
         self.current_turn = random.randint(0, len(self.players) - 1)
         self.state = 'NORMAL'
+        
+        # 🚀 Initial Hu cache update
+        for i in range(len(self.players)):
+            self.update_hu_cache(i)
+            
         return True
 
     def prune_dictionary_for_round(self):
@@ -276,53 +284,148 @@ class EnglishMahjongGame:
         tile = hand.pop(tile_index)
         self.last_discard = {'tile': tile, 'player_index': player_index}
         self.discard_piles[player_index].append(tile)
+        
+        # 🚀 Update Hu cache for ALL OTHER players (Ron/Hu on discard check)
+        for i in range(len(self.players)):
+            if i != player_index:
+                self.update_hu_cache(i)
+        
         return True
+
+    def check_hu_reservations_after_discard(self, self_draw_player_idx=None):
+        """
+        🀄 預約胡牌系統：每次有牌被打出後，自動檢查所有玩家的預約單字。
+        - 若有 last_discard：包含打出的牌（對除打牌者外的所有人）
+        - 若 last_discard 為 None 且 self_draw_player_idx 非 None：自摸模式，只檢查該玩家手牌
+        回傳 (winner_index, winning_words) 或 (None, None)。
+        """
+        discard_tile = self.last_discard.get('tile', {}) if self.last_discard else {}
+        discard_player_idx = self.last_discard.get('player_index') if self.last_discard else None
+        discard_letter = discard_tile.get('value', '').lower() if discard_tile.get('type') == 'letter' else None
+
+        # Determine which players to check
+        if self.last_discard:
+            players_to_check = list(self.hu_reservations.items())
+        elif self_draw_player_idx is not None:
+            # Self-draw mode: only check the player who just drew
+            reservation = self.hu_reservations.get(self_draw_player_idx)
+            players_to_check = [(self_draw_player_idx, reservation)] if reservation else []
+        else:
+            return None, None
+
+        from collections import Counter as _Counter
+
+        for p_idx, reserved_words in players_to_check:
+            if not reserved_words:
+                continue
+            p_idx = int(p_idx)
+            if p_idx >= len(self.players):
+                continue
+            player = self.players[p_idx]
+            hand = player.get('hand', [])
+            # Build letter pool from hand
+            letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
+            # Include the discarded tile if it's from another player
+            if discard_letter and discard_player_idx != p_idx:
+                letters = letters + [discard_letter]
+
+            # Verify the reserved words can be formed with the current letter pool
+            hand_counts = _Counter(letters)
+            claimed_counts = _Counter()
+            all_valid = True
+            invalid_reason = ''
+            for w in reserved_words:
+                if w not in self.dictionary:
+                    all_valid = False
+                    invalid_reason = f"'{w.upper()}' 不在字典中"
+                    break
+                claimed_counts.update(w)
+
+            if all_valid:
+                for char, cnt in claimed_counts.items():
+                    if hand_counts[char] < cnt:
+                        all_valid = False
+                        invalid_reason = f"手牌字母不足以拼出 '{char.upper()}'"
+                        break
+
+            if all_valid:
+                total_claimed = sum(claimed_counts.values())
+                total_letters = len(letters)
+                if total_claimed != total_letters:
+                    all_valid = False
+                    invalid_reason = "必須使用全部手牌"
+
+            if all_valid:
+                # 🏆 Win!
+                if discard_letter and discard_player_idx != p_idx:
+                    # Remove last tile from discard pile
+                    if discard_player_idx is not None and self.discard_piles[discard_player_idx]:
+                        self.discard_piles[discard_player_idx].pop()
+                    self.last_discard = None
+                winning_words = player.get('melds', []) + [w.upper() for w in reserved_words]
+                return p_idx, winning_words
+
+        return None, None
+
+
 
     def next_turn(self):
         self.current_turn = (self.current_turn + 1) % len(self.players)
         self.current_chi_options = {}
         dprint(f"DEBUG: [NEXT_TURN] Now Player {self.current_turn}'s turn. State: {self.state}")
-
-        dprint(f"DEBUG: [NEXT_TURN] Now Player {self.current_turn}'s turn. State: {self.state}")
-
-        # 🔍 Check ALL human players for chi opportunities
-        last_t = self.last_discard.get('tile') if self.last_discard else None # type: ignore
-        discarder_idx = self.last_discard.get('player_index') if self.last_discard else None # type: ignore
-        found_chi = False
+        last_t = self.last_discard.get('tile') if self.last_discard else None
+        discarder_idx = self.last_discard.get('player_index') if self.last_discard else None
         
-        dprint(f"DEBUG: [NEXT_TURN] current_turn={self.current_turn}, last_discard={self.last_discard}, last_t={last_t}")
+        found_action = False
         
         if last_t and discarder_idx is not None:
-            # 🗄️ Standard Mahjong Rules: Only "Chi" from the LEFT player (the next player)
-            check_idx = (int(discarder_idx) + 1) % len(self.players)
-            check_p = self.players[check_idx]
+            # 🗄️ Standard Mahjong Rules: 
+            # 1. Any player can Hu (Ron) on any discard.
+            # 2. Only the next player (LEFT) can Chi.
             
-            # 🚀 Calculate Chi options for the next player
-            options = self.calculate_chi_options(check_idx, last_t)
-            dprint(f"DEBUG: [NEXT_TURN] Checking Chi for LEFT player {check_idx} ({check_p.get('name')}): options={options}")
+            # Check for Hu in turn order starting from the next player
+            action_prioritized_player = None
             
-            # 🚀 NEXT-PLAYER HU CHECK:
-            # For human players, enter WAITING_ACTION if:
-            #   (a) they have Chi options, OR
-            #   (b) their hand has 16 tiles (could be Hu with this discard)
-            # For AI players, only enter WAITING_ACTION if they have Chi options.
-            is_human_next = not check_p.get('sid', '').startswith('ai_')
-            hand_size = len(check_p.get('hand', []))
-            could_hu = is_human_next and (hand_size == 16)
-            
-            if options or could_hu:
-                self.current_chi_options[check_idx] = options
-                self.state = 'WAITING_ACTION'
-                self.current_turn = check_idx
-                found_chi = True
-                dprint(f"DEBUG: [NEXT_TURN] Waiting for action from player {check_idx} (human={is_human_next}). chi_options={len(options)}")
+            for i in range(1, len(self.players)):
+                check_idx = (int(discarder_idx) + i) % len(self.players)
+                check_p = self.players[check_idx]
+                is_human = not check_p.get('sid', '').startswith('ai_')
+                
+                # Check for Hu (Ron)
+                hand = check_p.get('hand', [])
+                hand_letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
+                hand_items_count = len([t for t in hand if isinstance(t, dict) and t.get('type') == 'item'])
+                
+                # Temporarily add the discard to check for Hu
+                if last_t.get('type') == 'letter':
+                    hand_letters.append(last_t.get('value', '').lower())
+                
+                # For AI, we need to know their vocabulary for this "check"
+                # (Ideally we'd use a consistent vocabulary, but for detection we check if ANY Hu is possible)
+                # 🎯 Ron/Hu Detection: Use the high-performance cache we just updated in discard()
+                can_hu = check_p.get('can_hu', False)
+
+                # Check for Chi (Only for the LEFT player)
+                is_next_player = (i == 1)
+                chi_options = []
+                if is_next_player:
+                    chi_options = self.calculate_chi_options(check_idx, last_t)
+                
+                if can_hu or chi_options:
+                    self.state = 'WAITING_ACTION'
+                    self.current_turn = check_idx
+                    self.current_chi_options[check_idx] = chi_options
+                    found_action = True
+                    dprint(f"DEBUG: [NEXT_TURN] Waiting for action from player {check_idx}. Hu={can_hu}, Chi={len(chi_options)}")
+                    break # Prioritize the first player who can act in turn order
         
-        if not found_chi:
-            # Normal: draw tile for the next player
+        if not found_action:
+            # Normal: draw tile for the naturally next player
             self.state = 'NORMAL'
             new_tile = self.draw_tile()
             if new_tile:
                 self.players[self.current_turn]['hand'].append(new_tile)
+                self.update_hu_cache(self.current_turn) # 🚀 Cache update
                 dprint(f"DEBUG: [NEXT_TURN] Player {self.current_turn} drew {new_tile.get('value')}. State=NORMAL")
             else:
                 print("DEBUG: [NEXT_TURN] Deck empty! Game over.")
@@ -332,7 +435,7 @@ class EnglishMahjongGame:
                     socketio.start_background_task(schedule_demo_restart, self.room_id)
                 return
         
-        # ⏲️ Reset turn timer for the new acting player
+        # ⏲️ Reset turn timer for the acting player
         for p in self.players:
             p['turn_time'] = 20.0
 
@@ -345,14 +448,26 @@ class EnglishMahjongGame:
             self.state = 'NORMAL'
             self.current_chi_options = {}
             # 🔑 KEY FIX: Clear last_discard BEFORE calling next_turn().
-            # Without this, next_turn() sees the same discard and re-enters
-            # WAITING_ACTION for the same player → infinite skip loop.
             self.last_discard = None
+            
+            # 🚀 Update Hu cache for everyone (Ron no longer possible)
+            for i in range(len(self.players)):
+                self.update_hu_cache(i)
+            
             # Draw a tile for the skipping player (it's now their draw turn)
             new_tile = self.draw_tile()
             if new_tile:
                 self.players[player_index]['hand'].append(new_tile)
+                self.update_hu_cache(player_index) # 🚀 Cache update
                 dprint(f"DEBUG: [SKIP] Player {player_index} drew tile after skipping: {new_tile.get('value')}")
+            else:
+                # 🃏 Deck empty after skip
+                dprint("DEBUG: [SKIP] Deck empty! Game over.")
+                socketio.emit('game_over', {'winner': 'Nobody (Draw)', 'melds': [], 'hand': []}, room=self.room_id)
+                self.game_started = False
+                if getattr(self, 'demo_mode', False):
+                    socketio.start_background_task(schedule_demo_restart, self.room_id)
+            
             # Reset turn timers
             for p in self.players:
                 p['turn_time'] = 20.0
@@ -454,9 +569,18 @@ class EnglishMahjongGame:
             self.discard_piles[target_p_idx].pop() 
             
         self.last_discard = None
+        
+        # 🚀 Update Hu cache for everyone (Ron no longer possible)
+        for i in range(len(self.players)):
+            self.update_hu_cache(i)
+
         self.current_turn = player_index 
         self.state = 'NORMAL' 
         self.current_chi_options = {}
+        
+        # 🚀 Cache update after Chi
+        self.update_hu_cache(player_index)
+        
         return True
 
     def verify_manual_hu(self, player_index, words_str):
@@ -516,6 +640,42 @@ class EnglishMahjongGame:
             self.last_discard = None
 
         return True, words
+
+    def update_hu_cache(self, player_index):
+        """🚀 Performance: Update the can_hu status for a specific player."""
+        try:
+            player = self.players[player_index]
+            hand = player.get('hand', [])
+            
+            # 🛡️ Loophole Fix: If player has NO tiles in hand, they MUST have melds to win.
+            if not hand:
+                player['can_hu'] = bool(player.get('melds'))
+                return
+            
+            letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
+            items_count = len([t for t in hand if isinstance(t, dict) and t.get('type') == 'item'])
+            
+            # 🎯 In WAITING_ACTION, include the discarded tile (Ron/discard Hu)
+            if getattr(self, 'state', 'NORMAL') == 'WAITING_ACTION' and self.last_discard:
+                if self.last_discard.get('player_index') != player_index:
+                    tile = self.last_discard.get('tile', {})
+                    if isinstance(tile, dict):
+                        if tile.get('type') == 'letter':
+                            letters.append(tile.get('value', '').lower())
+                        elif tile.get('type') == 'item':
+                            items_count += 1
+            
+            if len(letters) < 2:
+                player['can_hu'] = False
+                return
+            
+            # 🚀 Simplified Hu Cache (Hint only, no complex detection)
+            # We keep it False by default to avoid server-side lag.
+            # Users can always manually click the HU button.
+            player['can_hu'] = False
+        except Exception as e:
+            dprint(f"DEBUG: [UPDATE_HU_CACHE] Error: {e}")
+            player['can_hu'] = False
 
     def AI_find_hu_partition(self, letters, items_count, current_melds=None, memo=None, vocab_limit=999999, is_nightmare=False, known_words=None):
         """
@@ -623,6 +783,7 @@ class EnglishMahjongGame:
 
     def register_wrong_move(self, player_index):
         self.players[player_index]['penalty_turns'] = 1
+        self.players[player_index]['penalty_turns'] = 1
 
 
 # ==========================================
@@ -641,6 +802,23 @@ def index():
 @app.route('/<path:path>')
 def static_proxy(path):
     return send_from_directory('static', path)
+
+@socketio.on('reorder_hand')
+def on_reorder_hand(data):
+    """🔄 Sync player's local hand order to the server for spectators."""
+    game = find_game_by_sid(request.sid)
+    if game:
+        player_index = next((i for i, p in enumerate(game.players) if p.get('sid') == request.sid), None)
+        if player_index is not None:
+            new_hand = data.get('hand', [])
+            # 🛡️ Security Check: Ensure the hand content matches, only order changed
+            current_hand_sorted = sorted(game.players[player_index]['hand'])
+            new_hand_sorted = sorted(new_hand)
+            
+            if current_hand_sorted == new_hand_sorted:
+                game.players[player_index]['hand'] = new_hand
+                # 📡 Broadcast to everyone so they see the new order
+                broadcast_game_state(game)
 
 @socketio.on('join')
 def on_join(data=None):
@@ -694,7 +872,8 @@ def on_join(data=None):
                     'difficulty': difficulty,
                     'vocab_limit': vocab_limit,
                     'bank_time': 60.0,
-                    'turn_time': 20.0
+                    'turn_time': 20.0,
+                    'can_hu': False # 🚀 Cache
                 })
             # 🎡 Autostart single-player immediately as requested by user
             initialize_game_start(game)
@@ -734,7 +913,8 @@ def on_add_ai(data=None):
             'difficulty': 'normal',
             'vocab_limit': int(len(WORDS) * 0.0005), # 🚀 Sync with halved 0.05% for normal
             'bank_time': 60.0,
-            'turn_time': 20.0
+            'turn_time': 20.0,
+            'can_hu': False # 🚀 Cache
         })
         print(f"DEBUG: [LOBBY] Added AI to room {game.room_id}. Total: {len(game.players)}")
         broadcast_game_state(game)
@@ -843,7 +1023,7 @@ def on_start_demo(data=None):
     game.players = []
     ai_names = ["AI East", "AI South", "AI West", "AI North"]
     total_words = len(WORDS)
-    vocab_limit = int(total_words * 0.00025) # Halved skill for Demo
+    vocab_limit = int(total_words * 0.005) # Boosted skill for Demo Performance
 
     for i in range(4):
         game.players.append({
@@ -858,7 +1038,7 @@ def on_start_demo(data=None):
             'penalty_turns': 0,
             'difficulty': 'easy', # Set to easy to make AI 'dumber'
             'vocab_limit': vocab_limit, 
-            'bank_time': 60.0,
+            'bank_time': 0.0, # Disable bank time jump in Demo
             'turn_time': 20.0
         })
 
@@ -907,7 +1087,15 @@ def on_discard(data=None):
     if tile_index is not None:
         success = game.discard(player_index, tile_index)
         if success:
+            # 🀄 Check reserved hu on DISCARD (other players can ron on this tile)
+            if _check_and_trigger_reserved_hu(game):
+                broadcast_game_state(game)
+                return
             game.next_turn()
+            # 🀄 Check reserved hu on SELF-DRAW (the player who just drew might complete their reservation)
+            if _check_and_trigger_reserved_hu(game, self_draw_player_idx=game.current_turn):
+                broadcast_game_state(game)
+                return
             broadcast_game_state(game)  # broadcast AFTER next_turn so chi_options + WAITING_ACTION is included
             trigger_turn(game)
         else:
@@ -968,57 +1156,80 @@ def on_skip(data=None):
                 broadcast_game_state(game)
                 trigger_turn(game)
 
-@socketio.on('action_hu')
-def on_hu(data=None):
+@socketio.on('reserve_hu')
+def on_reserve_hu(data=None):
+    """🀄 預約胡牌：玩家輸入想胡的單字組合，儲存在 game.hu_reservations[player_index]。
+    輸入後立即驗證單字是否在字典中，如果字典沒有就通知失敗。
+    不立刻判定勝負，等到場上出現對應字母牌時才自動觸發。
+    """
     data = data or {}
-    words_str = str(data.get('words', ''))
-    
+    words_str = str(data.get('words', '')).strip()
     game = find_game_by_sid(request.sid)
-    if game:
-        player_index = next((i for i, p in enumerate(game.players) if p.get('sid') == request.sid), None)
-        if player_index is not None:
-            words = re.findall(r'[a-zA-Z]+', words_str.lower())
-            
-            # Verify all words against restriction
-            invalid_words = [w.upper() for w in words if not game.validate_word(w)]
-            if invalid_words:
-                game.register_wrong_move(player_index)
-                res_display = game.restriction.get('display', '??') if game.restriction else '??'
-                socketio.emit('error', {'msg': f"Words {invalid_words} do not match the current rule ({res_display})! Penalized."}, room=request.sid)
-                broadcast_game_state(game)
-                return
+    if not game or not game.game_started:
+        socketio.emit('hu_reserve_result', {'success': False, 'msg': '遊戲尚未開始。'}, room=request.sid)
+        return
 
+    player_index = next((i for i, p in enumerate(game.players) if p.get('sid') == request.sid), None)
+    if player_index is None:
+        return
 
-            res = game.verify_manual_hu(player_index, words_str)
-            success, result_data = res if isinstance(res, tuple) else (res, [])
+    # Parse words
+    words = re.findall(r'[a-zA-Z]+', words_str.lower())
+    if not words:
+        # 清除預約
+        game.hu_reservations.pop(player_index, None)
+        socketio.emit('hu_reserve_result', {'success': False, 'msg': '已清除預約。', 'reserved': ''}, room=request.sid)
+        return
 
-            if success:
-                player = game.players[player_index]
-                winning_words = player.get('melds', []) + [w.upper() for w in result_data]
-                
-                # 🚀 FIX: Mark game as ended so the timer loop stops
-                game.game_started = False
-                socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name'), 'is_hu': True}, room=game.room_id)
-                socketio.emit('game_over', {'winner': player.get('name'), 'melds': winning_words, 'hand': []}, room=game.room_id)
-                socketio.emit('message', {'msg': f'{player.get("name")} HAS WON (HU)!'}, room=game.room_id)
-                
-                if getattr(game, 'demo_mode', False):
-                    socketio.start_background_task(schedule_demo_restart, game.room_id)
-            else:
-                game.register_wrong_move(player_index)
-                err_msg = result_data if isinstance(result_data, str) else "Invalid Hu!"
-                socketio.emit('error', {'msg': f'Wrong Hu! {err_msg} Penalized (Turn Skipped!).'}, room=request.sid)
-                
-                # 🚀 Enforce TURN SKIP: Advance turn ONLY if it's the player's own draw turn
-                # If they failed a Ron (on discard), they just lose the chance to Hu, but the turn continues normally
-                if getattr(game, 'state', 'NORMAL') != 'WAITING_ACTION':
-                    game.next_turn()
-                else:
-                    # If it was WAITING_ACTION, simply force a skip for the current player
-                    game.skip_action(player_index)
-                
-                broadcast_game_state(game)
-                trigger_turn(game)
+    # Validate: all words must be in dictionary
+    invalid = [w.upper() for w in words if w not in game.dictionary]
+    if invalid:
+        err = f"無法胡牌！單字 {', '.join(invalid)} 不在字典中。"
+        socketio.emit('hu_reserve_result', {'success': False, 'msg': err, 'reserved': ''}, room=request.sid)
+        return
+
+    # Store reservation
+    game.hu_reservations[player_index] = words
+    reserved_display = ' '.join(w.upper() for w in words)
+    player_name = game.players[player_index].get('name', '')
+    print(f"[HU_RESERVE] Player {player_name} reserved: {reserved_display}")
+    socketio.emit('hu_reserve_result', {
+        'success': True,
+        'msg': f'已預約胡牌：{reserved_display}',
+        'reserved': reserved_display
+    }, room=request.sid)
+
+    # 🎯 Immediately check if the reservation is already satisfiable with current hand
+    _check_and_trigger_reserved_hu(game)
+
+def _check_and_trigger_reserved_hu(game, self_draw_player_idx=None):
+    """🀄 在 discard / draw / reserve 後立即檢查所有玩家的預約胡牌是否達成。
+    self_draw_player_idx: 若非 None，表示自摸模式，只檢查該玩家。
+    """
+    if not game.game_started:
+        return False
+    winner_idx, winning_words = game.check_hu_reservations_after_discard(self_draw_player_idx)
+    if winner_idx is not None:
+        player = game.players[winner_idx]
+        game.game_started = False
+        game.hu_reservations = {}
+        socketio.emit('broadcast_meld_anim', {
+            'word': ' '.join(winning_words),
+            'player': player.get('name'),
+            'is_hu': True
+        }, room=game.room_id)
+        socketio.emit('game_over', {
+            'winner': player.get('name'),
+            'melds': winning_words,
+            'hand': []
+        }, room=game.room_id)
+        socketio.emit('message', {
+            'msg': f'🎉 {player.get("name")} 預約胡牌成功！ ({" ".join(winning_words)})'
+        }, room=game.room_id)
+        if getattr(game, 'demo_mode', False):
+            socketio.start_background_task(schedule_demo_restart, game.room_id)
+        return True
+    return False
 
 # ==========================================
 # 🤖 AI Logic & Anti-Lock (Background task version)
@@ -1114,7 +1325,7 @@ def process_ai_action(game, ai_index):
         
         # 🧪 Execute Hu partition analysis
         is_nightmare = (player.get('difficulty') == 'nightmare')
-        hu_set = game.AI_find_hu_partition(hand_letters, 0, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=ai_known_words)
+        hu_set = game.AI_find_hu_partition(hand_letters, hand_items_count, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=ai_known_words)
         if hu_set:
             winning_words = player.get('melds', []) + hu_set
             
@@ -1124,6 +1335,9 @@ def process_ai_action(game, ai_index):
                 if target_p_idx is not None and game.discard_piles[target_p_idx]:
                     game.discard_piles[target_p_idx].pop()
                 game.last_discard = None
+            
+            # Clear waiting action state
+            game.state = 'NORMAL'
 
             socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name', 'AI'), 'is_hu': True}, room=game.room_id)
             socketio.emit('game_over', {'winner': player.get('name', 'AI'), 'melds': winning_words, 'hand': []}, room=game.room_id)
@@ -1138,7 +1352,12 @@ def process_ai_action(game, ai_index):
             options = game.get_chi_options(ai_index)
             
             # 🎲 Difficulty determines whether to Chi (Action probability halved)
-            chi_skip_prob = {'easy': 0.85, 'normal': 0.65, 'hard': 0.55, 'nightmare': 0.525}.get(difficulty, 0.65)
+            # 🚀 Demo Mode: Increase Chi probability to make performance more dynamic
+            if getattr(game, 'demo_mode', False):
+                chi_skip_prob = 0.35 # 65% chance to Chi
+            else:
+                chi_skip_prob = {'easy': 0.85, 'normal': 0.65, 'hard': 0.55, 'nightmare': 0.525}.get(difficulty, 0.65)
+            
             should_chi = random.random() > chi_skip_prob
             
             if options and should_chi:
@@ -1210,7 +1429,15 @@ def process_ai_action(game, ai_index):
             dprint(f"DEBUG: [AI_DISCARD] Player {ai_index} ({difficulty}) discarding index {tile_idx} ({tile_val})")
             if game.discard(ai_index, tile_idx):
                 socketio.emit('message', {'msg': f'🤖 {player.get("name", "AI")} discarded {tile_val}'}, room=game.room_id)
+                # 🀄 Check reserved hu on DISCARD
+                if _check_and_trigger_reserved_hu(game):
+                    broadcast_game_state(game)
+                    return
                 game.next_turn()
+                # 🀄 Check reserved hu on SELF-DRAW
+                if _check_and_trigger_reserved_hu(game, self_draw_player_idx=game.current_turn):
+                    broadcast_game_state(game)
+                    return
                 broadcast_game_state(game)
                 trigger_turn(game)
             else:
@@ -1287,46 +1514,18 @@ def get_game_state(game, sid, include_hands=None):
             if p.get('sid') == sid:
                 state['my_hand'] = p.get('hand', [])
                 
-                # 🎯 HU Detection: Check if this player's hand can win
-                if game.game_started and game.current_turn == i:
-                    state['can_hu'] = _check_can_hu(game, i)
+                # 🎯 HU Detection: Use cached value (Performance!)
+                state['can_hu'] = p.get('can_hu', False)
             
         state['players'].append(player_info)
     return state
 
 
 def _check_can_hu(game, player_index):
-    """🎯 Check if a player's hand can be fully decomposed into valid words."""
-    try:
-        player = game.players[player_index]
-        hand = player.get('hand', [])
-        
-        # No tiles = can't hu (unless pure meld win)
-        if not hand:
-            return bool(player.get('melds'))
-        
-        letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
-        items_count = len([t for t in hand if isinstance(t, dict) and t.get('type') == 'item'])
-        
-        # 🎯 In WAITING_ACTION, include the discarded tile (Ron/discard Hu)
-        if getattr(game, 'state', 'NORMAL') == 'WAITING_ACTION' and game.last_discard:
-            if game.last_discard.get('player_index') != player_index:
-                tile = game.last_discard.get('tile', {})
-                if isinstance(tile, dict):
-                    if tile.get('type') == 'letter':
-                        letters.append(tile.get('value', '').lower())
-                    elif tile.get('type') == 'item':
-                        items_count += 1
-        
-        if len(letters) < 2:
-            return False
-        
-        # Use AI_find_hu_partition with full dictionary (no vocab limit)
-        result = game.AI_find_hu_partition(letters, items_count, vocab_limit=999999)
-        return result is not None
-    except Exception as e:
-        dprint(f"DEBUG: [CAN_HU] Error checking hu for player {player_index}: {e}")
+    """🎯 Performance: Return cached Hu status."""
+    if player_index < 0 or player_index >= len(game.players):
         return False
+    return game.players[player_index].get('can_hu', False)
 
 
 
@@ -1382,6 +1581,12 @@ def on_cheat_hu(data=None):
             
             player['hand'] = player['hand'][:16]
             player['melds'] = []
+            
+            # 🚀 Update Hu cache for cheat
+            player_index = next((i for i, p in enumerate(game.players) if p.get('sid') == request.sid), None)
+            if player_index is not None:
+                game.update_hu_cache(player_index)
+                
             broadcast_game_state(game)
             socketio.emit('message', {'msg': f'HINT: Manual Hu cheat activated.'}, room=request.sid)
 
@@ -1434,7 +1639,7 @@ def run_game_timer_loop(room_id):
     🕒 Main game timer loop
     """
     while True:
-        socketio.sleep(1)
+        socketio.sleep(0.1) # High resolution for smooth countdown
         game = games.get(room_id)
         if not game or not getattr(game, 'game_started', False): break
         if getattr(game, 'timer_paused', False): continue
@@ -1443,11 +1648,16 @@ def run_game_timer_loop(room_id):
         player = game.players[active_idx]
         
         if player['turn_time'] > 0:
-            player['turn_time'] -= 1.0
+            player['turn_time'] -= 0.1
         elif player['bank_time'] > 0:
-            player['bank_time'] -= 1.0
+            player['bank_time'] -= 0.1
         else:
-            # ⏰ Time out! Force a random discard
+            # ⏰ Time out! Force a random discard (unless it's Demo Mode)
+            if getattr(game, 'demo_mode', False) or player.get('sid', '').startswith('ai_'):
+                # 🤖 AI in Demo mode should NOT be forced to move by the timer
+                player['turn_time'] = 20.0 # Just reset it visually
+                continue
+
             dprint(f"DEBUG: [TIMER] Player {active_idx} timed out! Auto-discarding.")
             if game.state == 'WAITING_ACTION':
                 game.skip_action(active_idx)

@@ -443,6 +443,9 @@ function actuallyRenderBoard() {
                                     tileEl.style.transform = "";
                                     tileEl.style.zIndex = "";
                                     renderBoard();
+                                    
+                                    // 🔄 Sync new hand order to server for spectators
+                                    socket.emit('reorder_hand', { hand: localHand });
                                     return;
                                 }
 
@@ -542,6 +545,7 @@ function actuallyRenderBoard() {
 
     renderWall();
     updateActionUI();
+    updateTimersOnly(); 
 }
 
 function renderWall() {
@@ -589,63 +593,118 @@ function createTileElement(tile, isSmall = false, position = 'bottom') {
     return el;
 }
 
+// 🀄 Hu Reservation State
+let huReservation = ''; // Currently reserved word(s)
+
 function updateActionUI() {
     const container = document.getElementById('action-container');
     const myIndex = getMyIndex();
 
-    container.innerHTML = '';
-    let showContainer = false;
-
     if (myIndex !== -1 && gameState.game_started && !isSpectator) {
-        const isMyTurn = (gameState.current_turn === myIndex);
         const isWaitingForMe = (gameState.state === 'WAITING_ACTION' && gameState.current_turn === myIndex);
 
-        // 🎯 Show HU button ONLY when server detects the hand can win
-        if (isMyTurn && gameState.can_hu) {
-            const huBtn = document.createElement('button');
-            huBtn.id = 'btn-hu';
-            huBtn.className = 'action-btn hu hu-glow';
-            huBtn.innerText = '🀄 HU (WIN)';
-            huBtn.onclick = () => {
-                if (isDrawing) return;
-                showCustomInput(`Enter the words in your hand (separate with spaces):`, (words) => {
-                    if (words) socket.emit('action_hu', { room: roomID, words: words });
+        // 1. Manage HU RESERVATION PANEL efficiently
+        let huPanel = document.getElementById('hu-reserve-panel');
+        if (!huPanel) {
+            // First time creation
+            huPanel = document.createElement('div');
+            huPanel.id = 'hu-reserve-panel';
+            huPanel.className = 'hu-reserve-panel';
+            huPanel.innerHTML = `
+                <div id="hu-reserve-label-container"></div>
+                <div class="hu-reserve-input-row" id="hu-btn-row">
+                    <input type="text" id="hu-reserve-input" class="hu-reserve-input" 
+                        placeholder="輸入胡牌單字 (空格分隔)" 
+                        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                    <button id="btn-hu-reserve" class="action-btn hu">🀄 預約</button>
+                    <button id="btn-hu-cancel" class="action-btn skip hidden">✕ 取消</button>
+                </div>
+            `;
+            container.appendChild(huPanel);
+
+            // Add event listeners only once
+            huPanel.querySelector('#btn-hu-reserve').addEventListener('click', () => {
+                const input = document.getElementById('hu-reserve-input');
+                socket.emit('reserve_hu', { room: roomID, words: input ? input.value.trim() : '' });
+            });
+
+            huPanel.querySelector('#btn-hu-cancel').addEventListener('click', () => {
+                const input = document.getElementById('hu-reserve-input');
+                if (input) input.value = '';
+                socket.emit('reserve_hu', { room: roomID, words: '' });
+            });
+
+            const huInput = huPanel.querySelector('#hu-reserve-input');
+            if (huInput) {
+                huInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') huPanel.querySelector('#btn-hu-reserve').click();
                 });
-            };
-            container.appendChild(huBtn);
-            showContainer = true;
+            }
         }
 
-        // Show CHI button only if waiting AND there are actual options
+        // Update reservation state display without wiping user input
+        const labelContainer = document.getElementById('hu-reserve-label-container');
+        if (labelContainer) {
+            labelContainer.innerHTML = huReservation
+                ? `<span class="hu-reserve-status active">🀄 預約中: <b>${huReservation}</b></span>`
+                : `<span class="hu-reserve-status">🀄 未預約胡牌</span>`;
+        }
+        
+        const reserveBtn = document.getElementById('btn-hu-reserve');
+        if (reserveBtn) {
+            reserveBtn.innerText = huReservation ? '✏️ 更新' : '🀄 預約';
+            reserveBtn.className = `action-btn hu ${huReservation ? 'hu-glow' : ''}`;
+        }
+
+        const cancelBtn = document.getElementById('btn-hu-cancel');
+        if (cancelBtn) {
+            if (huReservation) cancelBtn.classList.remove('hidden');
+            else cancelBtn.classList.add('hidden');
+        }
+
+        // 2. Manage CHI/SKIP Buttons efficiently
+        let btnsContainer = document.getElementById('action-btns-container');
+        if (!btnsContainer) {
+            btnsContainer = document.createElement('div');
+            btnsContainer.id = 'action-btns-container';
+            btnsContainer.style.display = 'flex';
+            btnsContainer.style.gap = '1.5vmin';
+            btnsContainer.style.justifyContent = 'center';
+            btnsContainer.style.width = '100%';
+            container.appendChild(btnsContainer);
+        }
+
         if (isWaitingForMe) {
+            btnsContainer.innerHTML = ''; // Wipe only the buttons part, safe since they are transient
             const options = gameState.chi_options[String(myIndex)] || [];
             if (options === true || (Array.isArray(options) && options.length > 0)) {
                 const chiBtn = document.createElement('button');
                 chiBtn.id = 'btn-chi';
                 chiBtn.className = 'action-btn chi';
-                chiBtn.innerText = `CHI`; // 🛡️ Hide count
+                chiBtn.innerText = `CHI`;
                 chiBtn.onclick = () => {
                     showCustomInput(`Enter the word to CHI:`, (word) => {
                         if (word && word.trim()) socket.emit('action_chi', { room: roomID, word: word.trim() });
                     });
                 };
-                container.appendChild(chiBtn);
+                btnsContainer.appendChild(chiBtn);
             }
 
-            // Always show SKIP during WAITING_ACTION
             const skipBtn = document.createElement('button');
             skipBtn.id = 'btn-skip';
             skipBtn.className = 'action-btn skip';
             skipBtn.innerText = 'SKIP';
             skipBtn.onclick = () => socket.emit('action_skip', { room: roomID });
-            container.appendChild(skipBtn);
-            showContainer = true;
+            btnsContainer.appendChild(skipBtn);
+            btnsContainer.classList.remove('hidden');
+        } else {
+            btnsContainer.classList.add('hidden');
+            btnsContainer.innerHTML = '';
         }
-    }
 
-    if (showContainer) {
         container.classList.remove('hidden');
     } else {
+        container.innerHTML = '';
         container.classList.add('hidden');
     }
 }
@@ -988,6 +1047,7 @@ socket.on('start_restriction_wheel', (res) => {
     // closeWheel();
 });
 socket.on('game_over', (data) => {
+    huReservation = ''; // 🀄 Clear reservation on game end
     const isMe = (data.winner === username);
     const overlay = document.getElementById('result-overlay');
     const titleEl = document.getElementById('winner-title');
@@ -995,7 +1055,12 @@ socket.on('game_over', (data) => {
     
     overlay.classList.remove('hidden');
     
-    if (isMe) {
+    if (data.winner === 'Nobody (Draw)') {
+        titleEl.innerText = "平手 (DRAW)";
+        titleEl.classList.remove('you-win');
+        nameEl.innerText = "The game ended in a draw (No tiles left).";
+        showToast(`🤝 DRAW: NO TILES LEFT`);
+    } else if (isMe) {
         titleEl.innerText = "YOU WIN!";
         titleEl.classList.add('you-win');
         nameEl.innerText = `Congratulations, ${data.winner}!`;
@@ -1027,6 +1092,19 @@ socket.on('game_over', (data) => {
 socket.on('message', (data) => showToast(data.msg));
 socket.on('error', (data) => showToast("❌ " + data.msg));
 
+// 🀄 Hu Reservation Result
+socket.on('hu_reserve_result', (data) => {
+    if (data.success) {
+        huReservation = data.reserved || '';
+        showToast(`✅ ${data.msg}`);
+    } else {
+        huReservation = '';
+        showToast(`❌ ${data.msg}`);
+    }
+    // Re-render action panel to update reservation display
+    updateActionUI();
+});
+
 socket.on('broadcast_meld_anim', (data) => {
     // 🔊 Play appropriate sound
     if (data.is_hu) {
@@ -1036,17 +1114,28 @@ socket.on('broadcast_meld_anim', (data) => {
         playChiSound();
     }
 
-    // ✨ Visual Animation: Show the word and player name
+    // ✨ Visual Animation: Show the word and player name in center with Artistic Text
     const fxLayer = document.getElementById('fx-layer');
     if (fxLayer) {
         const el = document.createElement('div');
-        el.className = 'meld-anim-overlay' + (data.is_hu ? ' hu-style' : '');
+        el.className = 'meld-anim-overlay';
+        
+        const mainText = data.is_hu ? 'HU!' : 'CHI!';
+        const colorClass = data.is_hu ? 'hu-text' : 'chi-text';
+        
         el.innerHTML = `
-            <div class="meld-player-name">${data.player}</div>
-            <div class="meld-word">${data.word || (data.is_hu ? 'HU!' : 'CHI!')}</div>
+            <div class="meld-player-name-banner">${data.player}</div>
+            <div class="meld-artistic-text ${colorClass}">${mainText}</div>
+            ${data.word ? `<div class="meld-word-display">${data.word}</div>` : ''}
         `;
         
         fxLayer.appendChild(el);
+        
+        // 🎊 Add some extra flair for HU
+        if (data.is_hu) {
+            fireConfetti();
+        }
+        
         setTimeout(() => el.remove(), 2500);
     }
 });
@@ -1244,7 +1333,9 @@ function updateTimersOnly() {
                     timerEl.className = 'timer-floating';
                     handEl.appendChild(timerEl);
                 }
-                const timeStr = Math.ceil(player.turn_time > 0 ? player.turn_time : player.bank_time);
+                let timeLeft = player.turn_time > 0 ? player.turn_time : player.bank_time;
+                // 🚀 Performance Mode: Show decimals for a "High-Tech" feel
+                const timeStr = (isSpectator || gameState.is_performance_mode) ? timeLeft.toFixed(1) : Math.ceil(timeLeft);
                 timerEl.innerHTML = `<div class="timer-val">${timeStr}</div>`;
                 timerEl.className = `timer-floating ${player.turn_time <= 3 ? 'urgent' : ''}`;
             } else if (timerEl) {
