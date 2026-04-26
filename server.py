@@ -1188,6 +1188,34 @@ def on_reserve_hu(data=None):
         socketio.emit('hu_reserve_result', {'success': False, 'msg': err, 'reserved': ''}, room=request.sid)
         return
 
+    # Validate: length and hand composition
+    player = game.players[player_index]
+    hand = player.get('hand', [])
+    hand_letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
+    expected_length = len(hand_letters) + 1
+
+    total_chars = sum(len(w) for w in words)
+    if total_chars != expected_length:
+        err = f"無法胡牌！預約單字共 {total_chars} 個字母，但你需要剛好 {expected_length} 個字母 (手牌全用 + 聽 1 張)。"
+        socketio.emit('hu_reserve_result', {'success': False, 'msg': err, 'reserved': ''}, room=request.sid)
+        return
+
+    from collections import Counter as _Counter
+    claimed_counts = _Counter()
+    for w in words:
+        claimed_counts.update(w)
+    
+    hand_counts = _Counter(hand_letters)
+    missing_letters = []
+    for char, count in claimed_counts.items():
+        if hand_counts[char] < count:
+            missing_letters.extend([char] * (count - hand_counts[char]))
+    
+    if len(missing_letters) > 1:
+        err = f"無法胡牌！手牌無法拼出這些字，缺少：{', '.join(missing_letters).upper()} (只能聽 1 張牌)。"
+        socketio.emit('hu_reserve_result', {'success': False, 'msg': err, 'reserved': ''}, room=request.sid)
+        return
+
     # Store reservation
     game.hu_reservations[player_index] = words
     reserved_display = ' '.join(w.upper() for w in words)

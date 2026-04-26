@@ -1345,6 +1345,35 @@ function updateTimersOnly() {
     }
 }
 
+window.showCustomInput = function(title, callback) {
+    const overlay = document.getElementById('input-overlay');
+    const titleEl = document.getElementById('input-title');
+    const inputEl = document.getElementById('custom-input-field');
+    const confirmBtn = document.getElementById('input-confirm-btn');
+    
+    titleEl.innerText = title;
+    inputEl.value = '';
+    overlay.classList.remove('hidden');
+    inputEl.focus();
+    
+    const handleConfirm = () => {
+        overlay.classList.add('hidden');
+        confirmBtn.removeEventListener('click', handleConfirm);
+        if (callback) callback(inputEl.value);
+    };
+    
+    confirmBtn.onclick = null; // clear previous
+    confirmBtn.addEventListener('click', handleConfirm);
+    
+    inputEl.onkeypress = (e) => {
+        if (e.key === 'Enter') handleConfirm();
+    };
+}
+
+window.hideCustomInput = function() {
+    document.getElementById('input-overlay').classList.add('hidden');
+}
+
 
 
 
