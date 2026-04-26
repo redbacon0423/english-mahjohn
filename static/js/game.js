@@ -970,13 +970,26 @@ socket.on('game_state', (state) => {
         // document.getElementById('game-status-panel').classList.remove('hidden');
     }
 
-    // Toggle Start Button Visibility (Now always shown in its respective phase)
+    // Toggle Start Button Visibility (Only show to Host/Spectator before game starts)
     const startBtn = document.getElementById('start-btn');
+    const tableStartBtn = document.getElementById('table-start-btn');
+    
+    // Check if current user is the room host (spectator mode implies host of TV Room)
+    const isHost = (myRole === 'spectator') || (currentGameMode === 'single');
+    
     if (startBtn) {
-        if (!state.game_started) {
+        if (!state.game_started && isHost) {
             startBtn.classList.remove('hidden');
         } else {
             startBtn.classList.add('hidden');
+        }
+    }
+    
+    if (tableStartBtn) {
+        if (!state.game_started && isHost) {
+            tableStartBtn.classList.remove('hidden');
+        } else {
+            tableStartBtn.classList.add('hidden');
         }
     }
 });
