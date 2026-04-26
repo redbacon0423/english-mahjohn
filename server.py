@@ -151,7 +151,7 @@ class EnglishMahjongGame:
         self.current_turn = 0
         self.state = 'WAITING'
         self.demo_mode = False 
-        self.ai_interval = 5.0 
+        self.ai_interval = 1.5 
         self.current_chi_options = {} # 🚀 Fix: Initialize to prevent crash in lobby
         self.hu_reservations = {}  # 🀄 預約胡牌: {player_index: [word1, word2, ...]}
 
@@ -1274,7 +1274,7 @@ def process_ai_action(game, ai_index):
         difficulty = player.get('difficulty', 'normal')
         
         # 🚀 Use custom interval if set, otherwise fallback to difficulty-based delay
-        delay = getattr(game, 'ai_interval', 5.0)
+        delay = getattr(game, 'ai_interval', 1.5)
         socketio.sleep(delay)
         
         if not getattr(game, 'game_started', False): return
