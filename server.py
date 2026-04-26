@@ -437,7 +437,7 @@ class EnglishMahjongGame:
         
         # ⏲️ Reset turn timer for the acting player
         for p in self.players:
-            p['turn_time'] = 20.0
+            p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
 
 
 
@@ -470,7 +470,7 @@ class EnglishMahjongGame:
             
             # Reset turn timers
             for p in self.players:
-                p['turn_time'] = 20.0
+                p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
             return True
 
         return False
@@ -1701,7 +1701,7 @@ def run_game_timer_loop(room_id):
             
             # ⏲️ Reset turn timer for next player after timeout
             for p in game.players:
-                p['turn_time'] = 20.0
+                p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
             
             trigger_turn(game)
             broadcast_game_state(game)
