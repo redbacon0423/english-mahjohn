@@ -682,8 +682,13 @@ class EnglishMahjongGame:
         Recursively find if the hand can be fully decomposed into words matching the restriction.
         Optimization: Use "Target character search" (Exact Cover Branch) to reduce search space.
         """
-        if memo is None: memo = {}
+        if memo is None: memo = {'__calls__': 0}
         
+        # 🛡️ Anti-Lock: Cap max recursion to prevent Eventlet thread hanging
+        memo['__calls__'] = memo.get('__calls__', 0) + 1
+        if memo['__calls__'] > 1500:
+            return None
+            
         # 0. Base Case: Hand empty
         if not letters and items_count == 0:
             return current_melds or []
@@ -753,7 +758,7 @@ class EnglishMahjongGame:
                             new_hand.extend([char] * count)
                             
                         # Recursively check remaining
-                        res = self.AI_find_hu_partition(new_hand, items_count - needed_wildcards, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit)
+                        res = self.AI_find_hu_partition(new_hand, items_count - needed_wildcards, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words)
                         if res is not None:
                             memo[hand_key] = res
                             return res
@@ -771,7 +776,7 @@ class EnglishMahjongGame:
                 random.shuffle(candidates)
                 for word in candidates:
                     if self.validate_word(word, fast_check=True):
-                        res = self.AI_find_hu_partition([], items_count - length, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit)
+                        res = self.AI_find_hu_partition([], items_count - length, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words)
                         if res is not None:
                             memo[hand_key] = res
                             return res
