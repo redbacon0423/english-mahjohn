@@ -532,7 +532,10 @@ class EnglishMahjongGame:
         wildcard_count = len(items)
 
         is_discard_hu = False
-        if getattr(self, 'state', 'NORMAL') == 'WAITING_ACTION' and self.last_discard:
+        current_state = getattr(self, 'state', 'NORMAL')
+        prev_state = getattr(self, 'saved_state', current_state)
+        
+        if (current_state == 'WAITING_ACTION' or prev_state == 'WAITING_ACTION') and self.last_discard:
             if self.last_discard.get('player_index') != player_index: # type: ignore
                 tile = self.last_discard.get('tile', {}) # type: ignore
                 if isinstance(tile, dict):
@@ -1504,12 +1507,14 @@ def on_cheat_hu(data=None):
 
 @socketio.on('update_ai_interval')
 def on_update_ai_interval(data):
-    game = find_game_by_sid(request.sid)
+    room_id = data.get('room') or sid_to_room.get(request.sid)
+    game = games.get(room_id) if room_id else None
+    
     if game:
         val = data.get('interval', 5.0)
         try:
             game.ai_interval = float(val)
-            dprint(f"DEBUG: [AI_INTERVAL] Updated in room {game.room_id} to {game.ai_interval}s")
+            print(f"DEBUG: [AI_INTERVAL] Updated in room {game.room_id} to {game.ai_interval}s")
             socketio.emit('message', {'msg': f'AI Speed set to {game.ai_interval}s'}, room=game.room_id)
         except: pass
 
