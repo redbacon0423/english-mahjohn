@@ -1110,7 +1110,7 @@ socket.on('error', (data) => showToast("❌ " + data.msg));
 socket.on('broadcast_meld_anim', (data) => {
     // 🔊 Play appropriate sound
     if (data.is_hu) {
-        if (!gameState || !gameState.is_performance_mode) playHuSound();
+        playHuSound();
         fireConfetti();
     } else {
         playChiSound();

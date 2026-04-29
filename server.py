@@ -1240,7 +1240,14 @@ def process_ai_action(game, ai_index):
         target_size = len(hand_letters) + hand_items_count
         if target_size >= 2:
             is_nightmare = (player.get('difficulty') == 'nightmare')
-            hu_set = game.AI_find_hu_partition(hand_letters, hand_items_count, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=ai_known_words)
+            
+            # 📉 Lower AI Hu Rate: Add a chance to just "miss" the Hu opportunity
+            hu_chance = {'easy': 0.05, 'normal': 0.15, 'hard': 0.40, 'nightmare': 0.85}.get(difficulty, 0.15)
+            if getattr(game, 'demo_mode', False):
+                hu_chance = 0.35 # Fixed moderate rate for demo mode
+                
+            if random.random() < hu_chance:
+                hu_set = game.AI_find_hu_partition(hand_letters, hand_items_count, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=ai_known_words)
         
         if hu_set:
             winning_words = player.get('melds', []) + hu_set
@@ -1294,7 +1301,8 @@ def process_ai_action(game, ai_index):
                     else:
                         chosen_word = random.choice(valid_options)
                         
-                    if game.perform_chi(ai_index, chosen_word):
+                    success, _ = game.perform_chi(ai_index, chosen_word)
+                    if success:
                         socketio.emit('broadcast_meld_anim', {'word': str(chosen_word).upper(), 'player': player.get('name', 'AI'), 'is_hu': False}, room=game.room_id)
                         broadcast_game_state(game)
                         trigger_turn(game)
