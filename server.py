@@ -1,30 +1,27 @@
+try:
+    import eventlet # type: ignore
+    eventlet.monkey_patch()
+    _async_mode = 'eventlet'
+except ImportError:
+    _async_mode = 'threading'
+
 import os
 import json
 import random
 import socket
 import re
 from collections import Counter
-from typing import List, Dict, Any, Optional
+from typing import Any
 from flask import Flask, render_template, send_from_directory, request # type: ignore
-from flask_socketio import SocketIO, join_room, leave_room # type: ignore
-from google import genai # type: ignore
-
+from flask_socketio import SocketIO, join_room # type: ignore
+try:
+    from google import genai # type: ignore
+except ImportError:
+    genai = None
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'majan_secret!'
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable static file caching
 
-# 💡 Auto-detect async mode: Use eventlet on Render (production), threading for local dev
-def _detect_async_mode():
-    try:
-        import eventlet
-        eventlet.monkey_patch()
-        print("[OK] Using eventlet async mode (production)")
-        return 'eventlet'
-    except ImportError:
-        print("[INFO] Using threading async mode (local dev)")
-        return 'threading'
-
-_async_mode = _detect_async_mode()
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode=_async_mode)
 
 @app.after_request
@@ -37,7 +34,7 @@ def add_no_cache(response):
 
 
 games: dict[str, 'EnglishMahjongGame'] = {}
-GLOBAL_DEBUG = False # 🚀 Set to False for Exhibition/Production to boost performance
+GLOBAL_DEBUG = False  # 🚀 Set to False for Exhibition/Production
 
 def dprint(*args, **kwargs):
     if GLOBAL_DEBUG:
@@ -62,15 +59,15 @@ if not gemini_api_key:
             print(f"Failed to read local Gemini key: {e}")
 
 gemini_client = None
-if gemini_api_key:
+if gemini_api_key and genai is not None:
     try:
         gemini_client = genai.Client(api_key=gemini_api_key)
         print("✅ Gemini API configured successfully.")
     except Exception as e:
         print(f"Failed to configure Gemini: {e}")
 
-# 🧠 Theme validation cache & Data
-THEME_CACHE: Dict[str, bool] = {}
+# 🧠 Theme validation cache
+THEME_CACHE: dict[str, bool] = {}
 # ==========================================
 # 📚 Load Dictionary
 # ==========================================
@@ -89,8 +86,6 @@ if os.path.exists(freq_path):
         WORD_FREQUENCIES = json.load(f)
         WORD_RANK = {word.lower(): i for i, word in enumerate(WORD_FREQUENCIES)}
 
-THEMES = []
-
 def get_local_ip():
     # 🚀 ONLY use Render URL if specifically in a Render environment
     if os.environ.get('RENDER'):
@@ -102,9 +97,9 @@ def get_local_ip():
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
-        return f"{ip}:5001"
+        return ip
     except:
-        return "localhost:5001"
+        return "localhost"
 
 LOCAL_IP = get_local_ip()
 print(f" * Server running on LAN: http://{LOCAL_IP}:5001")
@@ -153,7 +148,8 @@ class EnglishMahjongGame:
         self.demo_mode = False 
         self.ai_interval = 5.0 
         self.current_chi_options = {} # 🚀 Fix: Initialize to prevent crash in lobby
-        self.hu_reservations = {}  # 🀄 預約胡牌: {player_index: [word1, word2, ...]}
+        self.saved_state = None
+        self.hu_declaring_player = None
 
     def set_dictionary(self, dictionary: list[str]):
         self.dictionary = set(dictionary)
@@ -217,7 +213,8 @@ class EnglishMahjongGame:
         self.discard_piles = [[] for _ in range(len(self.players))]
         self.last_discard = None
         self.current_chi_options = {}
-        self.hu_reservations = {}  # 🀄 Clear reservations on new game
+        self.saved_state = None
+        self.hu_declaring_player = None
         
         for p in self.players:
             p['hand'] = []
@@ -292,80 +289,6 @@ class EnglishMahjongGame:
         
         return True
 
-    def check_hu_reservations_after_discard(self, self_draw_player_idx=None):
-        """
-        🀄 預約胡牌系統：每次有牌被打出後，自動檢查所有玩家的預約單字。
-        - 若有 last_discard：包含打出的牌（對除打牌者外的所有人）
-        - 若 last_discard 為 None 且 self_draw_player_idx 非 None：自摸模式，只檢查該玩家手牌
-        回傳 (winner_index, winning_words) 或 (None, None)。
-        """
-        discard_tile = self.last_discard.get('tile', {}) if self.last_discard else {}
-        discard_player_idx = self.last_discard.get('player_index') if self.last_discard else None
-        discard_letter = discard_tile.get('value', '').lower() if discard_tile.get('type') == 'letter' else None
-
-        # Determine which players to check
-        if self.last_discard:
-            players_to_check = list(self.hu_reservations.items())
-        elif self_draw_player_idx is not None:
-            # Self-draw mode: only check the player who just drew
-            reservation = self.hu_reservations.get(self_draw_player_idx)
-            players_to_check = [(self_draw_player_idx, reservation)] if reservation else []
-        else:
-            return None, None
-
-        from collections import Counter as _Counter
-
-        for p_idx, reserved_words in players_to_check:
-            if not reserved_words:
-                continue
-            p_idx = int(p_idx)
-            if p_idx >= len(self.players):
-                continue
-            player = self.players[p_idx]
-            hand = player.get('hand', [])
-            # Build letter pool from hand
-            letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
-            # Include the discarded tile if it's from another player
-            if discard_letter and discard_player_idx != p_idx:
-                letters = letters + [discard_letter]
-
-            # Verify the reserved words can be formed with the current letter pool
-            hand_counts = _Counter(letters)
-            claimed_counts = _Counter()
-            all_valid = True
-            invalid_reason = ''
-            for w in reserved_words:
-                if w not in self.dictionary:
-                    all_valid = False
-                    invalid_reason = f"'{w.upper()}' 不在字典中"
-                    break
-                claimed_counts.update(w)
-
-            if all_valid:
-                for char, cnt in claimed_counts.items():
-                    if hand_counts[char] < cnt:
-                        all_valid = False
-                        invalid_reason = f"手牌字母不足以拼出 '{char.upper()}'"
-                        break
-
-            if all_valid:
-                total_claimed = sum(claimed_counts.values())
-                total_letters = len(letters)
-                if total_claimed != total_letters:
-                    all_valid = False
-                    invalid_reason = "必須使用全部手牌"
-
-            if all_valid:
-                # 🏆 Win!
-                if discard_letter and discard_player_idx != p_idx:
-                    # Remove last tile from discard pile
-                    if discard_player_idx is not None and self.discard_piles[discard_player_idx]:
-                        self.discard_piles[discard_player_idx].pop()
-                    self.last_discard = None
-                winning_words = player.get('melds', []) + [w.upper() for w in reserved_words]
-                return p_idx, winning_words
-
-        return None, None
 
 
 
@@ -384,13 +307,11 @@ class EnglishMahjongGame:
             # 2. Only the next player (LEFT) can Chi.
             
             # Check for Hu in turn order starting from the next player
-            action_prioritized_player = None
             
             for i in range(1, len(self.players)):
                 check_idx = (int(discarder_idx) + i) % len(self.players)
                 check_p = self.players[check_idx]
-                is_human = not check_p.get('sid', '').startswith('ai_')
-                
+
                 # Check for Hu (Ron)
                 hand = check_p.get('hand', [])
                 hand_letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
@@ -420,6 +341,17 @@ class EnglishMahjongGame:
                     break # Prioritize the first player who can act in turn order
         
         if not found_action:
+            # 🛡️ Handle Penalty Turns
+            loops = 0
+            while self.players[self.current_turn].get('penalty_turns', 0) > 0 and loops < len(self.players):
+                self.players[self.current_turn]['penalty_turns'] -= 1
+                penalized_player_name = self.players[self.current_turn].get('name', 'Unknown')
+                dprint(f"DEBUG: [NEXT_TURN] Player {self.current_turn} skipped due to penalty.")
+                # We need to emit via socketio, but self doesn't have it directly. Luckily socketio is global in server.py
+                socketio.emit('message', {'msg': f"🚫 {penalized_player_name} is suspended for this turn!"}, room=getattr(self, 'room_id', ''))
+                self.current_turn = (self.current_turn + 1) % len(self.players)
+                loops += 1
+
             # Normal: draw tile for the naturally next player
             self.state = 'NORMAL'
             new_tile = self.draw_tile()
@@ -577,11 +509,9 @@ class EnglishMahjongGame:
         self.current_turn = player_index 
         self.state = 'NORMAL' 
         self.current_chi_options = {}
-        
         # 🚀 Cache update after Chi
         self.update_hu_cache(player_index)
-        
-        return True
+        return True, ""
 
     def verify_manual_hu(self, player_index, words_str):
         player = self.players[player_index]
@@ -620,7 +550,8 @@ class EnglishMahjongGame:
             if w not in self.dictionary:
                 return False, f"'{w.upper()}' is not in the dictionary."
             if not self.validate_word(w):
-                return False, f"'{w.upper()}' does not match the current restriction ({self.restriction.get('display', '??')})."
+                restriction_display = self.restriction.get('display', '??') if self.restriction else '??'
+                return False, f"'{w.upper()}' does not match the current restriction ({restriction_display})."
             claimed_counts.update(w)
 
         for char, count in claimed_counts.items():
@@ -677,30 +608,25 @@ class EnglishMahjongGame:
             dprint(f"DEBUG: [UPDATE_HU_CACHE] Error: {e}")
             player['can_hu'] = False
 
-    def AI_find_hu_partition(self, letters, items_count, current_melds=None, memo=None, vocab_limit=999999, is_nightmare=False, known_words=None):
-        """
-        Recursively find if the hand can be fully decomposed into words matching the restriction.
-        Optimization: Use "Target character search" (Exact Cover Branch) to reduce search space.
-        """
+    def AI_find_hu_partition(self, letters, items_count, current_melds=None, memo=None, vocab_limit=1000, is_nightmare=False, known_words=None):
         if memo is None: memo = {'__calls__': 0}
-        
-        # 🛡️ Anti-Lock: Cap max recursion to prevent Eventlet thread hanging
-        memo['__calls__'] = memo.get('__calls__', 0) + 1
-        if memo['__calls__'] > 1500:
-            return None
-            
-        # 0. Base Case: Hand empty
-        if not letters and items_count == 0:
-            return current_melds or []
-        
-        # 1. Check Cache (Simplify hand state to string)
         hand_key = "".join(sorted(letters)) + f":{items_count}"
         if hand_key in memo: return memo[hand_key]
         
-        target_len = len(letters)
-        if target_len < 2: 
+        # 🚀 ANTI-STALL: Fast return for impossible small hands
+        target_len = len(letters) + items_count
+        if target_len > 0 and target_len < 2:
             memo[hand_key] = None
-            return None 
+            return None
+
+        # 🛡️ Anti-Lock: Cap max recursion to prevent hanging
+        memo['__calls__'] += 1
+        if memo['__calls__'] > 1000:
+            return None
+            
+        # 0. Base Case: Hand empty
+        if target_len == 0:
+            return current_melds or []
 
         # 2. Core Logic: If hand has letters, we MUST use one of them (e.g., the first one)
         if letters:
@@ -787,8 +713,8 @@ class EnglishMahjongGame:
  
 
     def register_wrong_move(self, player_index):
-        self.players[player_index]['penalty_turns'] = 1
-        self.players[player_index]['penalty_turns'] = 1
+        if 0 <= player_index < len(self.players):
+            self.players[player_index]['penalty_turns'] = self.players[player_index].get('penalty_turns', 0) + 1
 
 
 # ==========================================
@@ -816,11 +742,10 @@ def on_reorder_hand(data):
         player_index = next((i for i, p in enumerate(game.players) if p.get('sid') == request.sid), None)
         if player_index is not None:
             new_hand = data.get('hand', [])
-            # 🛡️ Security Check: Ensure the hand content matches, only order changed
-            current_hand_sorted = sorted(game.players[player_index]['hand'])
-            new_hand_sorted = sorted(new_hand)
-            
-            if current_hand_sorted == new_hand_sorted:
+            # 🛡️ Security Check: Ensure tile counts match (by value), only order changed
+            def hand_sig(h):
+                return sorted((t.get('type',''), t.get('value','')) for t in h if isinstance(t, dict))
+            if hand_sig(game.players[player_index]['hand']) == hand_sig(new_hand):
                 game.players[player_index]['hand'] = new_hand
                 # 📡 Broadcast to everyone so they see the new order
                 broadcast_game_state(game)
@@ -856,10 +781,10 @@ def on_join(data=None):
             # Easy: 0.05%, Normal: 0.1%, Hard: 0.15%, Nightmare: 0.2%
             total_words = len(WORDS)
             limit_map = {
-                'easy': max(1, int(total_words * 0.00025)),      
-                'normal': max(1, int(total_words * 0.00050)),    
-                'hard': max(1, int(total_words * 0.00075)),      
-                'nightmare': max(1, int(total_words * 0.00100))  
+                'easy': max(1, int(total_words * 0.01)),      # 1%
+                'normal': max(1, int(total_words * 0.05)),    # 5%
+                'hard': max(1, int(total_words * 0.10)),      # 10%
+                'nightmare': max(1, int(total_words * 0.20))  # 20%
             }
             vocab_limit = limit_map.get(difficulty, limit_map['normal'])
             
@@ -916,7 +841,7 @@ def on_add_ai(data=None):
             'protected_turns': 0,
             'penalty_turns': 0,
             'difficulty': 'normal',
-            'vocab_limit': int(len(WORDS) * 0.0005), # 🚀 Sync with halved 0.05% for normal
+            'vocab_limit': int(len(WORDS) * 0.05), # 5% for normal
             'bank_time': 60.0,
             'turn_time': 20.0,
             'can_hu': False # 🚀 Cache
@@ -937,18 +862,19 @@ def initialize_game_start(game):
         ai_names = ["AI Right", "AI Top", "AI Left"]
         for i in range(num_players, 4):
             game.players.append({
-                'name': ai_names[i-1] if i-1 < len(ai_names) else f"AI {i}", 
-                'sid': f"ai_multi_{i}", 
-                'hand': [], 
-                'melds': [], 
-                'hand_size': 0, 
-                'wrong_moves': 0, 
-                'protected_turns': 0, 
+                'name': ai_names[i-1] if i-1 < len(ai_names) else f"AI {i}",
+                'sid': f"ai_multi_{i}",
+                'hand': [],
+                'melds': [],
+                'hand_size': 0,
+                'wrong_moves': 0,
+                'protected_turns': 0,
                 'penalty_turns': 0,
                 'difficulty': 'normal',
-                'vocab_limit': int(len(WORDS) * 0.0005), # 🚀 Sync with halved 0.05% for normal
+                'vocab_limit': int(len(WORDS) * 0.05),
                 'bank_time': 60.0,
-                'turn_time': 20.0
+                'turn_time': 20.0,
+                'can_hu': False
             })
 
     # Select game restriction
@@ -1022,15 +948,17 @@ def on_start_demo(data=None):
     
     game = games[room_id]
     game.demo_mode = True
-    game.ai_interval = 1.5  # 🚀 Performance Mode needs to be fast
+    # 🚀 Bug Fix #1: Always build word index so AI can find hu partitions
+    game.set_dictionary(WORDS)
+    # 🚀 Bug Fix #2: Preserve slider-set interval; only default to 1.5 on first launch
+    if not hasattr(game, 'ai_interval') or game.ai_interval == 5.0:
+        game.ai_interval = 1.5  # Fast default for Performance Mode
     sid_to_room[request.sid] = room_id
     
     # Clear existing players and add 4 AI
     game.players = []
     ai_names = ["AI East", "AI South", "AI West", "AI North"]
     total_words = len(WORDS)
-    vocab_limit = int(total_words * 0.005) # Boosted skill for Demo Performance
-
     for i in range(4):
         game.players.append({
             'name': ai_names[i], 
@@ -1042,13 +970,13 @@ def on_start_demo(data=None):
             'wrong_moves': 0,
             'protected_turns': 0, 
             'penalty_turns': 0,
-            'difficulty': 'easy', # Set to easy to make AI 'dumber'
-            'vocab_limit': vocab_limit, 
+            'difficulty': 'hard', 
+            'vocab_limit': int(total_words * 0.08), # 8% for demo/performance
             'bank_time': 0.0, # Disable bank time jump in Demo
             'turn_time': 20.0
         })
 
-    print(f"DEBUG: [DEMO] Performance mode initialized in room {room_id}. Autostarting...")
+    print(f"DEBUG: [DEMO] Performance mode initialized in room {room_id}. ai_interval={game.ai_interval}s. Autostarting...")
     game.is_performance_mode = True
     
     game.spectators.add(request.sid)
@@ -1093,15 +1021,7 @@ def on_discard(data=None):
     if tile_index is not None:
         success = game.discard(player_index, tile_index)
         if success:
-            # 🀄 Check reserved hu on DISCARD (other players can ron on this tile)
-            if _check_and_trigger_reserved_hu(game):
-                broadcast_game_state(game)
-                return
             game.next_turn()
-            # 🀄 Check reserved hu on SELF-DRAW (the player who just drew might complete their reservation)
-            if _check_and_trigger_reserved_hu(game, self_draw_player_idx=game.current_turn):
-                broadcast_game_state(game)
-                return
             broadcast_game_state(game)  # broadcast AFTER next_turn so chi_options + WAITING_ACTION is included
             trigger_turn(game)
         else:
@@ -1114,6 +1034,8 @@ def schedule_demo_restart(room_id):
     game = games.get(room_id)
     if game and getattr(game, 'demo_mode', False):
         print(f"DEBUG: [DEMO] Auto-restarting game in room {room_id}...")
+        # 🚀 Bug Fix #1: Rebuild word index on every restart so AI can Hu
+        game.set_dictionary(WORDS)
         initialize_game_start(game)
 
 
@@ -1162,108 +1084,59 @@ def on_skip(data=None):
                 broadcast_game_state(game)
                 trigger_turn(game)
 
-@socketio.on('reserve_hu')
-def on_reserve_hu(data=None):
-    """🀄 預約胡牌：玩家輸入想胡的單字組合，儲存在 game.hu_reservations[player_index]。
-    輸入後立即驗證單字是否在字典中，如果字典沒有就通知失敗。
-    不立刻判定勝負，等到場上出現對應字母牌時才自動觸發。
-    """
-    data = data or {}
-    words_str = str(data.get('words', '')).strip()
+@socketio.on('declare_hu')
+def on_declare_hu(data=None):
     game = find_game_by_sid(request.sid)
-    if not game or not game.game_started:
-        socketio.emit('hu_reserve_result', {'success': False, 'msg': '遊戲尚未開始。'}, room=request.sid)
-        return
-
+    if not game or not game.game_started: return
     player_index = next((i for i, p in enumerate(game.players) if p.get('sid') == request.sid), None)
-    if player_index is None:
+    if player_index is None: return
+
+    if getattr(game, 'state', 'NORMAL') != 'PAUSED_FOR_HU':
+        game.saved_state = getattr(game, 'state', 'NORMAL')
+        game.state = 'PAUSED_FOR_HU'
+        game.hu_declaring_player = player_index
+        broadcast_game_state(game)
+
+@socketio.on('submit_hu')
+def on_submit_hu(data=None):
+    game = find_game_by_sid(request.sid)
+    if not game or not game.game_started: return
+    player_index = next((i for i, p in enumerate(game.players) if p.get('sid') == request.sid), None)
+    if player_index is None: return
+
+    if getattr(game, 'state', 'NORMAL') != 'PAUSED_FOR_HU' or game.hu_declaring_player != player_index:
         return
 
-    # Parse words
-    words = re.findall(r'[a-zA-Z]+', words_str.lower())
-    if not words:
-        # 清除預約
-        game.hu_reservations.pop(player_index, None)
-        socketio.emit('hu_reserve_result', {'success': False, 'msg': '已清除預約。', 'reserved': ''}, room=request.sid)
-        return
+    words_str = str(data.get('words', '')).strip() if data else ''
+    
+    # Empty/cancel or failed hu -> penalize
+    if not words_str:
+        success = False
+        words = []
+    else:
+        success, words = game.verify_manual_hu(player_index, words_str)
 
-    # Validate: all words must be in dictionary
-    invalid = [w.upper() for w in words if w not in game.dictionary]
-    if invalid:
-        err = f"無法胡牌！單字 {', '.join(invalid)} 不在字典中。"
-        socketio.emit('hu_reserve_result', {'success': False, 'msg': err, 'reserved': ''}, room=request.sid)
-        return
-
-    # Validate: length and hand composition
     player = game.players[player_index]
-    hand = player.get('hand', [])
-    hand_letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
-    expected_length = len(hand_letters) + 1
 
-    total_chars = sum(len(w) for w in words)
-    if total_chars != expected_length:
-        err = f"無法胡牌！預約單字共 {total_chars} 個字母，但你需要剛好 {expected_length} 個字母 (手牌全用 + 聽 1 張)。"
-        socketio.emit('hu_reserve_result', {'success': False, 'msg': err, 'reserved': ''}, room=request.sid)
-        return
-
-    from collections import Counter as _Counter
-    claimed_counts = _Counter()
-    for w in words:
-        claimed_counts.update(w)
-    
-    hand_counts = _Counter(hand_letters)
-    missing_letters = []
-    for char, count in claimed_counts.items():
-        if hand_counts[char] < count:
-            missing_letters.extend([char] * (count - hand_counts[char]))
-    
-    if len(missing_letters) > 1:
-        err = f"無法胡牌！手牌無法拼出這些字，缺少：{', '.join(missing_letters).upper()} (只能聽 1 張牌)。"
-        socketio.emit('hu_reserve_result', {'success': False, 'msg': err, 'reserved': ''}, room=request.sid)
-        return
-
-    # Store reservation
-    game.hu_reservations[player_index] = words
-    reserved_display = ' '.join(w.upper() for w in words)
-    player_name = game.players[player_index].get('name', '')
-    print(f"[HU_RESERVE] Player {player_name} reserved: {reserved_display}")
-    socketio.emit('hu_reserve_result', {
-        'success': True,
-        'msg': f'已預約胡牌：{reserved_display}',
-        'reserved': reserved_display
-    }, room=request.sid)
-
-    # 🎯 Immediately check if the reservation is already satisfiable with current hand
-    _check_and_trigger_reserved_hu(game)
-
-def _check_and_trigger_reserved_hu(game, self_draw_player_idx=None):
-    """🀄 在 discard / draw / reserve 後立即檢查所有玩家的預約胡牌是否達成。
-    self_draw_player_idx: 若非 None，表示自摸模式，只檢查該玩家。
-    """
-    if not game.game_started:
-        return False
-    winner_idx, winning_words = game.check_hu_reservations_after_discard(self_draw_player_idx)
-    if winner_idx is not None:
-        player = game.players[winner_idx]
+    if success:
+        winning_words = player.get('melds', []) + [w.upper() for w in words]
         game.game_started = False
-        game.hu_reservations = {}
-        socketio.emit('broadcast_meld_anim', {
-            'word': ' '.join(winning_words),
-            'player': player.get('name'),
-            'is_hu': True
-        }, room=game.room_id)
-        socketio.emit('game_over', {
-            'winner': player.get('name'),
-            'melds': winning_words,
-            'hand': []
-        }, room=game.room_id)
-        socketio.emit('message', {
-            'msg': f'🎉 {player.get("name")} 預約胡牌成功！ ({" ".join(winning_words)})'
-        }, room=game.room_id)
+        socketio.emit('broadcast_meld_anim', {'word': ' '.join(winning_words), 'player': player.get('name'), 'is_hu': True}, room=game.room_id)
+        socketio.emit('game_over', {'winner': player.get('name'), 'melds': winning_words, 'hand': []}, room=game.room_id)
+        socketio.emit('message', {'msg': f'🎉 {player.get("name")} HU! ({" ".join(winning_words)})'}, room=game.room_id)
         if getattr(game, 'demo_mode', False):
             socketio.start_background_task(schedule_demo_restart, game.room_id)
-        return True
-    return False
+    else:
+        # Failure! Penalty: 1 turn. Safely restore saved state.
+        prev_state = getattr(game, 'saved_state', None) or 'NORMAL'
+        game.state = prev_state
+        game.hu_declaring_player = None
+        game.register_wrong_move(player_index)
+        fail_msg = '🚨 胡牌失敗！暫停一回合行動。' if words_str else '❌ 取消胡牌。暫停一回合行動。'
+        socketio.emit('error', {'msg': fail_msg}, room=request.sid)
+        socketio.emit('message', {'msg': f'{fail_msg.split("。")[0]} ({player.get("name")})'}, room=game.room_id)
+        broadcast_game_state(game)
+        trigger_turn(game)
 
 # ==========================================
 # 🤖 AI Logic & Anti-Lock (Background task version)
@@ -1271,6 +1144,8 @@ def _check_and_trigger_reserved_hu(game, self_draw_player_idx=None):
 def trigger_turn(game):
     """Turn Progression Scheduler"""
     if not getattr(game, 'game_started', False): return
+    # 🚀 Bug Fix #5: Don't trigger any AI when game is paused for Hu declaration
+    if getattr(game, 'state', 'NORMAL') == 'PAUSED_FOR_HU': return
     
     current_player = game.players[game.current_turn]
     dprint(f"DEBUG: [TRIGGER] Turn={game.current_turn}, Player={current_player.get('name')}, State={game.state}")
@@ -1326,10 +1201,10 @@ def process_ai_action(game, ai_index):
         # 🧠 Consistent Vocabulary Limit across ALL modes based on difficulty (0.05% - 0.2% of the FULL dictionary)
         total_words_count = len(WORDS)
         limit_map = {
-            'easy': max(1, int(total_words_count * 0.00025)),      
-            'normal': max(1, int(total_words_count * 0.00050)),    
-            'hard': max(1, int(total_words_count * 0.00075)),      
-            'nightmare': max(1, int(total_words_count * 0.00100))  
+            'easy': max(1, int(total_words_count * 0.01)),      
+            'normal': max(1, int(total_words_count * 0.05)),    
+            'hard': max(1, int(total_words_count * 0.10)),      
+            'nightmare': max(1, int(total_words_count * 0.20))  
         }
         vocab_limit = limit_map.get(difficulty, limit_map['normal'])
         
@@ -1357,9 +1232,13 @@ def process_ai_action(game, ai_index):
             if tile.get('type') == 'letter':
                 hand_letters.append(tile.get('value', '').lower())
         
-        # 🧪 Execute Hu partition analysis
-        is_nightmare = (player.get('difficulty') == 'nightmare')
-        hu_set = game.AI_find_hu_partition(hand_letters, hand_items_count, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=ai_known_words)
+        # 🧪 Execute Hu partition analysis (Only if hand is large enough to be possibly winning)
+        hu_set = None
+        target_size = len(hand_letters) + hand_items_count
+        if target_size >= 2:
+            is_nightmare = (player.get('difficulty') == 'nightmare')
+            hu_set = game.AI_find_hu_partition(hand_letters, hand_items_count, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=ai_known_words)
+        
         if hu_set:
             winning_words = player.get('melds', []) + hu_set
             
@@ -1463,15 +1342,7 @@ def process_ai_action(game, ai_index):
             dprint(f"DEBUG: [AI_DISCARD] Player {ai_index} ({difficulty}) discarding index {tile_idx} ({tile_val})")
             if game.discard(ai_index, tile_idx):
                 socketio.emit('message', {'msg': f'🤖 {player.get("name", "AI")} discarded {tile_val}'}, room=game.room_id)
-                # 🀄 Check reserved hu on DISCARD
-                if _check_and_trigger_reserved_hu(game):
-                    broadcast_game_state(game)
-                    return
                 game.next_turn()
-                # 🀄 Check reserved hu on SELF-DRAW
-                if _check_and_trigger_reserved_hu(game, self_draw_player_idx=game.current_turn):
-                    broadcast_game_state(game)
-                    return
                 broadcast_game_state(game)
                 trigger_turn(game)
             else:
@@ -1513,7 +1384,8 @@ def get_game_state(game, sid, include_hands=None):
         'is_spectator': is_spectator,
         'is_performance_mode': getattr(game, 'is_performance_mode', False), # 🚀 Sync flag to frontend
         'room_id': getattr(game, 'room_id', 'unknown'),
-        'can_hu': False  # 🎯 HU detection flag
+        'can_hu': False,  # 🎯 HU detection flag
+        'hu_declaring_player': getattr(game, 'hu_declaring_player', None)
     }
     
     for i, p in enumerate(game.players):
@@ -1743,4 +1615,4 @@ if __name__ == '__main__':
         print(f" * Starting server on port {port}...")
         socketio.run(app, debug=False, port=port, host='0.0.0.0', allow_unsafe_werkzeug=True)
     except Exception as e:
-        print(f"\n[ERROR] Server failed to start: {e}")
+        print(f"\n[ERROR] Server failed to start: {e}")

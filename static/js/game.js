@@ -156,6 +156,16 @@ function startPerformanceMode() {
     document.getElementById('reveal-hands-toggle').checked = true; // Auto-reveal hands for demo
     showHands = true;
     
+    // 🚀 Bug Fix #2: Sync slider to server's default 1.5s for Performance Mode
+    const slider = document.getElementById('ai-interval-slider');
+    const sliderLabel = slider ? slider.nextElementSibling : null;
+    if (slider) {
+        slider.value = '1.5';
+        if (sliderLabel) sliderLabel.innerText = '1.5s';
+        // Server already defaults to 1.5s but emit to confirm sync
+        setTimeout(() => window.updateAIInterval('1.5'), 500);
+    }
+    
     showToast("🤖 PERFORMANCE MODE (AI vs AI) READY");
 }
 window.startPerformanceMode = startPerformanceMode;
@@ -176,6 +186,25 @@ function joinRoom() {
     }
 }
 window.joinRoom = joinRoom;
+
+function submitHu() {
+    const input = document.getElementById('hu-submit-input');
+    if (socket && input) {
+        socket.emit('submit_hu', { room: roomID, words: input.value.trim() });
+        input.value = '';
+    }
+}
+window.submitHu = submitHu;
+
+function cancelHu() {
+    const input = document.getElementById('hu-submit-input');
+    if (socket) {
+        socket.emit('submit_hu', { room: roomID, words: '' });
+        if (input) input.value = '';
+    }
+}
+window.cancelHu = cancelHu;
+
 
 // 🚀 Ensure All "Start Game" buttons work
 const triggerStart = (e) => {
@@ -237,6 +266,39 @@ function renderBoard() {
 function actuallyRenderBoard() {
     if (!gameState) return;
 
+    // === PAUSE FOR HU OVERLAY ===
+    const pauseOverlay = document.getElementById('pause-hu-overlay');
+    if (gameState.state === 'PAUSED_FOR_HU') {
+        pauseOverlay.classList.remove('hidden');
+        
+        const declaringIdx = gameState.hu_declaring_player;
+        const declaringPlayerName = (declaringIdx != null && gameState.players[declaringIdx])
+            ? gameState.players[declaringIdx].name
+            : '???';
+        const myIndex = getMyIndex();
+        const isMyHuTurn = (myIndex !== -1 && myIndex === declaringIdx);
+
+        const titleEl = document.getElementById('pause-hu-title');
+        const msgEl = document.getElementById('pause-hu-msg');
+        const inputArea = document.getElementById('hu-input-area');
+        const inp = document.getElementById('hu-submit-input');
+
+        if (isMyHuTurn) {
+            if (titleEl) titleEl.innerHTML = '🀄 宣告胡牌!';
+            if (msgEl) msgEl.innerHTML = '請輸入您手牌組成的 <b>所有英文單字</b>（空格分隔）：';
+            if (inputArea) inputArea.classList.remove('hidden');
+            // Auto-focus once
+            if (inp && document.activeElement !== inp) inp.focus();
+        } else {
+            if (titleEl) titleEl.innerHTML = '⏸️ 全場暫停';
+            if (msgEl) msgEl.innerHTML = `<b style="color:var(--neon-pink)">${declaringPlayerName}</b> 正在宣告胡牌...<br><span style="opacity:0.6;font-size:0.85em">等待輸入確認</span>`;
+            if (inputArea) inputArea.classList.add('hidden');
+        }
+    } else {
+        if (pauseOverlay) pauseOverlay.classList.add('hidden');
+    }
+
+
     // Detect new discard
     if (gameState.last_discard) {
         const currentDiscardStr = JSON.stringify(gameState.last_discard);
@@ -246,15 +308,12 @@ function actuallyRenderBoard() {
         }
     }
 
+
     const positions = ['bottom', 'right', 'top', 'left'];
     const myIndex = getMyIndex();
-    // 🚀 Robust Indexing: Priority to SID, fallback to unique localStorage ID (if implemented),
-    // next fallback to name, last fallback to index 0 (if Single Player/only one human)
     let effectiveMyIdx = (myIndex !== -1) ? myIndex : gameState.players.findIndex(p => p.name === username && !p.sid.startsWith('ai_'));
     
     if (effectiveMyIdx === -1) {
-        // 📺 SPECTATOR/TV STABILITY: For spectators, fix the view to Player 0's perspective.
-        // This prevents the board from rotating suddenly if human players join or leave.
         effectiveMyIdx = 0;
     }
 
@@ -273,16 +332,7 @@ function actuallyRenderBoard() {
             if (player) {
                 const posLabel = ""; // No more wind labels
                 
-                // --- Win Probability Badge (Spectator / TV mode only) ---
-                let probBadge = "";
-                if (isSpectator && gameState.game_started) {
-                    const prob = calculateWinProb(player);
-                    probBadge = `<div class="win-prob-badge">WIN: ${prob}%</div>`;
-                }
-
                 nameEl.innerHTML = `
-                    ${probBadge}
-                    ${posLabel}
                     <div class="p-name">${player.name}</div>
                     <div class="p-meta">${gameState.game_started ? player.hand_size + ' Tiles' : 'Waiting...'}</div>
                 `;
@@ -593,112 +643,73 @@ function createTileElement(tile, isSmall = false, position = 'bottom') {
     return el;
 }
 
-// 🀄 Hu Reservation State
-let huReservation = ''; // Currently reserved word(s)
 
 function updateActionUI() {
     const container = document.getElementById('action-container');
     const myIndex = getMyIndex();
+    const isPaused = gameState.state === 'PAUSED_FOR_HU';
 
     if (myIndex !== -1 && gameState.game_started && !isSpectator) {
         const isWaitingForMe = (gameState.state === 'WAITING_ACTION' && gameState.current_turn === myIndex);
 
-        // 1. Manage HU RESERVATION PANEL efficiently
-        let huPanel = document.getElementById('hu-reserve-panel');
+        // ====== ALWAYS-ON HU BUTTON ======
+        let huPanel = document.getElementById('hu-permanent-panel');
         if (!huPanel) {
-            // First time creation
             huPanel = document.createElement('div');
-            huPanel.id = 'hu-reserve-panel';
-            huPanel.className = 'hu-reserve-panel';
-            huPanel.innerHTML = `
-                <div id="hu-reserve-label-container"></div>
-                <div class="hu-reserve-input-row" id="hu-btn-row">
-                    <input type="text" id="hu-reserve-input" class="hu-reserve-input" 
-                        placeholder="輸入胡牌單字 (空格分隔)" 
-                        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-                    <button id="btn-hu-reserve" class="action-btn hu">🀄 預約</button>
-                    <button id="btn-hu-cancel" class="action-btn skip hidden">✕ 取消</button>
-                </div>
-            `;
+            huPanel.id = 'hu-permanent-panel';
+            huPanel.style.cssText = 'width:100%; margin-bottom:8px;';
             container.appendChild(huPanel);
-
-            // Add event listeners only once
-            huPanel.querySelector('#btn-hu-reserve').addEventListener('click', () => {
-                const input = document.getElementById('hu-reserve-input');
-                socket.emit('reserve_hu', { room: roomID, words: input ? input.value.trim() : '' });
-            });
-
-            huPanel.querySelector('#btn-hu-cancel').addEventListener('click', () => {
-                const input = document.getElementById('hu-reserve-input');
-                if (input) input.value = '';
-                socket.emit('reserve_hu', { room: roomID, words: '' });
-            });
-
-            const huInput = huPanel.querySelector('#hu-reserve-input');
-            if (huInput) {
-                huInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') huPanel.querySelector('#btn-hu-reserve').click();
-                });
-            }
         }
 
-        // Update reservation state display without wiping user input
-        const labelContainer = document.getElementById('hu-reserve-label-container');
-        if (labelContainer) {
-            labelContainer.innerHTML = huReservation
-                ? `<span class="hu-reserve-status active">🀄 預約中: <b>${huReservation}</b></span>`
-                : `<span class="hu-reserve-status">🀄 未預約胡牌</span>`;
-        }
-        
-        const reserveBtn = document.getElementById('btn-hu-reserve');
-        if (reserveBtn) {
-            reserveBtn.innerText = huReservation ? '✏️ 更新' : '🀄 預約';
-            reserveBtn.className = `action-btn hu ${huReservation ? 'hu-glow' : ''}`;
-        }
+        const isMyHuDeclare = isPaused && gameState.hu_declaring_player === myIndex;
+        const btnLabel = isPaused
+            ? (isMyHuDeclare ? '⏳ 等待您輸入...' : '⏸️ 全場暫停中')
+            : '🀄 胡牌 (HU)';
+        const btnStyle = isPaused
+            ? 'width:100%;font-size:1.1rem;padding:10px 20px;opacity:0.6;cursor:default;'
+            : 'width:100%;font-size:1.2rem;padding:10px 20px;';
+        const btnClass = isPaused ? 'action-btn' : 'action-btn hu';
 
-        const cancelBtn = document.getElementById('btn-hu-cancel');
-        if (cancelBtn) {
-            if (huReservation) cancelBtn.classList.remove('hidden');
-            else cancelBtn.classList.add('hidden');
-        }
+        huPanel.innerHTML = `<button id="btn-declare-hu" class="${btnClass}" style="${btnStyle}">${btnLabel}</button>`;
 
-        // 2. Manage CHI/SKIP Buttons efficiently
+        document.getElementById('btn-declare-hu').addEventListener('click', () => {
+            if (isPaused) return; // Do nothing while paused
+            socket.emit('declare_hu', { room: roomID });
+        });
+
+        // ====== CHI / SKIP BUTTONS (only during WAITING_ACTION, not paused) ======
         let btnsContainer = document.getElementById('action-btns-container');
         if (!btnsContainer) {
             btnsContainer = document.createElement('div');
             btnsContainer.id = 'action-btns-container';
-            btnsContainer.style.display = 'flex';
-            btnsContainer.style.gap = '1.5vmin';
-            btnsContainer.style.justifyContent = 'center';
-            btnsContainer.style.width = '100%';
+            btnsContainer.style.cssText = 'display:flex;gap:1.5vmin;justify-content:center;width:100%;margin-top:8px;';
             container.appendChild(btnsContainer);
         }
 
-        if (isWaitingForMe) {
-            btnsContainer.innerHTML = ''; // Wipe only the buttons part, safe since they are transient
+        if (isWaitingForMe && !isPaused) {
+            btnsContainer.innerHTML = '';
             const options = gameState.chi_options[String(myIndex)] || [];
             if (options === true || (Array.isArray(options) && options.length > 0)) {
                 const chiBtn = document.createElement('button');
                 chiBtn.id = 'btn-chi';
                 chiBtn.className = 'action-btn chi';
-                chiBtn.innerText = `CHI`;
+                chiBtn.innerText = 'CHI';
                 chiBtn.onclick = () => {
-                    showCustomInput(`Enter the word to CHI:`, (word) => {
+                    showCustomInput('Enter the word to CHI:', (word) => {
                         if (word && word.trim()) socket.emit('action_chi', { room: roomID, word: word.trim() });
                     });
                 };
                 btnsContainer.appendChild(chiBtn);
             }
-
             const skipBtn = document.createElement('button');
             skipBtn.id = 'btn-skip';
             skipBtn.className = 'action-btn skip';
             skipBtn.innerText = 'SKIP';
             skipBtn.onclick = () => socket.emit('action_skip', { room: roomID });
             btnsContainer.appendChild(skipBtn);
-            btnsContainer.classList.remove('hidden');
+            btnsContainer.style.display = 'flex';
         } else {
-            btnsContainer.classList.add('hidden');
+            btnsContainer.style.display = 'none';
             btnsContainer.innerHTML = '';
         }
 
@@ -708,6 +719,8 @@ function updateActionUI() {
         container.classList.add('hidden');
     }
 }
+
+
 
 function getMyIndex(stateOverride) { 
     const s = stateOverride || gameState;
@@ -759,17 +772,6 @@ function updateAIInterval(val) {
 }
 window.updateAIInterval = updateAIInterval;
 
-function calculateWinProb(player) {
-    if (!player) return 0;
-    // Heuristic: based on melds and hand size
-    const meldScore = (player.melds.length / 4) * 70;
-    const handSize = player.hand_size || 0;
-    const progressScore = (16 - handSize) * 1.5;
-    const liveFactor = Math.sin(Date.now() / 2000) * 2; // Subtle live fluctuation
-    let res = Math.min(99, Math.round(meldScore + progressScore + liveFactor + 20));
-    if (player.melds && player.melds.length >= 4) return 100;
-    return Math.max(10, res);
-}
 
 
 
@@ -1060,7 +1062,6 @@ socket.on('start_restriction_wheel', (res) => {
     // closeWheel();
 });
 socket.on('game_over', (data) => {
-    huReservation = ''; // 🀄 Clear reservation on game end
     const isMe = (data.winner === username);
     const overlay = document.getElementById('result-overlay');
     const titleEl = document.getElementById('winner-title');
@@ -1105,18 +1106,6 @@ socket.on('game_over', (data) => {
 socket.on('message', (data) => showToast(data.msg));
 socket.on('error', (data) => showToast("❌ " + data.msg));
 
-// 🀄 Hu Reservation Result
-socket.on('hu_reserve_result', (data) => {
-    if (data.success) {
-        huReservation = data.reserved || '';
-        showToast(`✅ ${data.msg}`);
-    } else {
-        huReservation = '';
-        showToast(`❌ ${data.msg}`);
-    }
-    // Re-render action panel to update reservation display
-    updateActionUI();
-});
 
 socket.on('broadcast_meld_anim', (data) => {
     // 🔊 Play appropriate sound

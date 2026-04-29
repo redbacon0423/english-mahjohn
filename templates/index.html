@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>English Mahjong | Competitive Word Game</title>
     <!-- Update version to v41 -->
-    <link rel="stylesheet" href="/static/css/style.css?v=44">
+    <link rel="stylesheet" href="/static/css/style.css?v=49">
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Outfit:wght@400;700;900&family=Orbitron:wght@400;700;900&family=Roboto+Mono&display=swap"
         rel="stylesheet">
@@ -21,6 +21,23 @@
     <div id="fx-layer" style="pointer-events: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 100000; overflow: hidden;"></div>
 
     <div id="app">
+
+        <!-- Pause for Hu Overlay -->
+        <div id="pause-hu-overlay" class="overlay hidden" style="z-index: 3000;">
+            <div class="modal result-modal" style="border: 2px solid var(--neon-pink); box-shadow: 0 0 30px var(--neon-pink);">
+                <h2 id="pause-hu-title" style="color: var(--neon-pink); font-family: 'Orbitron';">GAME PAUSED</h2>
+                <div id="pause-hu-msg" style="margin: 20px 0; font-size: 1.2rem; color: #fff;"></div>
+                
+                <div id="hu-input-area" class="hidden" style="margin-top: 20px;">
+                    <input type="text" id="hu-submit-input" placeholder="輸入胡牌單字 (空格分隔)" style="width: 100%; padding: 10px; font-size: 1.2rem; background: #000; color: #fff; border: 2px solid var(--neon-blue); border-radius: 8px; margin-bottom: 20px; text-transform: uppercase;">
+                    <div style="display: flex; gap: 10px; justify-content: center;">
+                        <button class="primary-btn" onclick="submitHu()" style="background: var(--neon-pink); box-shadow: 0 0 20px var(--neon-pink);">CONFIRM HU</button>
+                        <button class="secondary-btn" onclick="cancelHu()">CANCEL</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Main Menu -->
         <div id="menu-overlay" class="overlay">
             <div class="modal main-menu-modal">
@@ -59,10 +76,12 @@
                     style="text-align: left; max-height: 50vh; overflow-y: auto; margin: 20px 0; padding-right: 10px; line-height: 1.8;">
                     <h3 style="color: var(--neon-blue); border-bottom: 1px solid rgba(0,242,255,0.2); padding-bottom: 5px;">核心玩法</h3>
                     <p>1. <b>遊戲開始：</b>每位玩家初始手持 <b>16 張字母牌</b>。玩家輪流進行摸牌與出牌。</p>
-                    <p>2. <b>吃牌 (CHI)：</b>當上家打出的牌能與您的手牌湊成一個<b>有效的英文單字</b>時，即可進行吃牌。</p>
-                    <p>3. <b>胡牌 (WIN)：</b>將手上的 16 張牌全部組合成<b>英文單字</b>即可獲勝！</p>
-                    <p>4. <b>單字限制：</b>禁止使用<b>專有名詞</b>（如人名、地名、品牌）、<b>非正式縮寫</b>或<b>單個字母</b>。</p>
-                    <p>5. <b>AI 難度：</b>AI 的詞彙量是從總字庫中<b>隨機抽樣</b>計算的（0.025% - 0.1%）。每次行動 AI 都會隨機「想起」一部分單字，難度越高抽到的字數越多。</p>
+                    <p>2. <b>出牌：</b>輪到自己時，點選手牌中的一張牌打出（點兩下確認）。</p>
+                    <p>3. <b>吃牌 (CHI)：</b>當上家打出的牌能與您的手牌湊成一個<b>有效的英文單字</b>時，即可進行吃牌。點擊 CHI 按鈕並輸入單字。</p>
+                    <p>4. <b>胡牌 (WIN)：</b>將手上的所有牌全部組合成<b>英文單字</b>即可獲勝！<b>胡牌按鈕常駐</b>於畫面，按下後全場暫停，等待您輸入獲勝單字組合並確認。</p>
+                    <p>5. <b>懲罰機制：</b>若胡牌輸入的單字不正確或取消，或者吃牌(CHI)失敗，將被懲罰<b>暫停一回合行動</b>。請確認手牌組合後再宣告！</p>
+                    <p>6. <b>單字限制：</b>禁止使用<b>專有名詞</b>（如人名、地名、品牌）、<b>非正式縮寫</b>或<b>單個字母</b>。需為一般英文字典中的詞彙。</p>
+                    <p>7. <b>AI 難度：</b>AI 的詞彙量從總字庫中<b>隨機抽樣</b>決定。難度越高，AI 能記住的單字越多，越難對付。</p>
                 </div>
                 <button class="primary-btn" onclick="toggleRules()">我明白了</button>
             </div>
@@ -226,7 +245,7 @@
     <script>
         const SERVER_LOCAL_IP = "{{ local_ip }}";
     </script>
-    <script src="/static/js/game.js?v=43"></script>
+    <script src="/static/js/game.js?v=48"></script>
 </body>
 
 
