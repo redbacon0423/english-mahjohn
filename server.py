@@ -846,7 +846,7 @@ def initialize_game_start(game):
         socketio.emit('message', {'msg': 'Game Started! Rule: FREE MODE'}, room=game.room_id)
         broadcast_game_state(game) 
         
-        # Start timer and starting player draw instantly
+        # Start timer and starting player draw, then trigger first turn
         def instant_start():
             start_p = game.current_turn
             if len(game.players[start_p]['hand']) == 16:
@@ -856,9 +856,10 @@ def initialize_game_start(game):
                     socketio.emit('message', {'msg': f'{game.players[start_p]["name"]} drew the first tile.'}, room=game.room_id)
             game.timer_paused = False
             broadcast_game_state(game)
+            # 🚨 Trigger AI ONLY after the tile has been drawn so hand is never empty
+            trigger_turn(game)
             
         socketio.start_background_task(instant_start)
-        trigger_turn(game)
         return True
     return False
 
@@ -1163,8 +1164,14 @@ def process_ai_action(game, ai_index):
         if game.current_turn != ai_index: return
         
         player = game.players[ai_index]
+        # 🚨 Wait up to 2s for hand to be populated (race condition guard for first turn)
+        for _ in range(20):
+            if player.get('hand'):
+                break
+            socketio.sleep(0.1)
+        
         if not player.get('hand'):
-            dprint(f"DEBUG: [AI_ERROR] Player {ai_index} has no hand! Skipping turn.")
+            dprint(f"DEBUG: [AI_ERROR] Player {ai_index} has no hand after waiting! Advancing.")
             game.next_turn()
             broadcast_game_state(game)
             trigger_turn(game)
