@@ -661,6 +661,9 @@ class EnglishMahjongGame:
                 
                 random.shuffle(candidates)
                 
+                # 🚀 ANTI-STALL: Cap horizontal search width to prevent massive loops freezing the server
+                candidates = candidates[:30]
+                
                 for word in candidates:
                     if not self.validate_word(word, fast_check=True): continue
                     
@@ -704,6 +707,10 @@ class EnglishMahjongGame:
                 else:
                     candidates = [w for w in candidates if WORD_RANK.get(w.lower(), 999999) < vocab_limit]
                 random.shuffle(candidates)
+                
+                # 🚀 ANTI-STALL: Cap horizontal search width to prevent massive loops freezing the server
+                candidates = candidates[:30]
+                
                 for word in candidates:
                     if self.validate_word(word, fast_check=True):
                         res = self.AI_find_hu_partition([], items_count - length, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words, call_cap=call_cap)
