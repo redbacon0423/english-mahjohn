@@ -329,7 +329,7 @@ class EnglishMahjongGame:
         
         # ⏲️ Reset turn timer for the acting player
         for p in self.players:
-            p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+            p['turn_time'] = 20.0
 
 
 
@@ -362,7 +362,7 @@ class EnglishMahjongGame:
             
             # Reset turn timers
             for p in self.players:
-                p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+                p['turn_time'] = 20.0
             return True
 
         return False
@@ -1564,17 +1564,84 @@ def on_disconnect():
 
 def run_game_timer_loop(room_id):
     """
-    🕒 Main game timer loop (Time limits disabled as per user request)
+    🕒 Main game timer loop
     """
     while True:
-        socketio.sleep(1.0) # Lower resolution since we aren't counting down
+        socketio.sleep(0.1) # High resolution for smooth countdown
         game = games.get(room_id)
         if not game or not getattr(game, 'game_started', False): break
+        if getattr(game, 'timer_paused', False): continue
         
-        # 🚀 LIGHTWEIGHT TIMER SYNC (Avoids heavy full-state broadcast)
+        active_idx = game.current_turn
+        player = game.players[active_idx]
+        
+        # 🚀 AI Timeout Override: Force timeout after their configured interval
+        ai_timeout_forced = False
+        if player.get('sid', '').startswith('ai_'):
+            # turn_time counts DOWN from 20. Timeout when it drops below (20 - ai_interval - 0.5).
+            threshold = 20.0 - getattr(game, 'ai_interval', 1.5) - 0.5
+            if player.get('turn_time', 20.0) <= threshold:
+                ai_timeout_forced = True
+
+        if player['turn_time'] > 0 and not ai_timeout_forced:
+            player['turn_time'] -= 0.1
+        elif player['bank_time'] > 0 and not ai_timeout_forced:
+            player['bank_time'] -= 0.1
+        else:
+            # ⏰ Time out! Force action immediately
+            dprint(f"DEBUG: [TIMER] Player {active_idx} timed out! is_AI={player.get('sid','').startswith('ai_')}, state={game.state}")
+            
+            if game.state == 'WAITING_ACTION':
+                game.skip_action(active_idx)
+                # After skip_action, next_turn logic already ran inside skip_action
+                # Reset timers for all players
+                for p in game.players:
+                    p['turn_time'] = 20.0
+                broadcast_game_state(game)
+                # Only trigger AI if next player is AI (avoid duplicate tasks)
+                next_player = game.players[game.current_turn]
+                if next_player.get('sid', '').startswith('ai_'):
+                    socketio.start_background_task(process_ai_action, game, game.current_turn)
+                continue
+
+            else:
+                # NORMAL state: force discard
+                hand = player.get('hand', [])
+                if hand:
+                    letter_indices = [i for i, t in enumerate(hand) if isinstance(t, dict) and t.get('type') == 'letter']
+                    discard_idx = random.choice(letter_indices) if letter_indices else 0
+                    game.discard(active_idx, discard_idx)
+                else:
+                    pass  # empty hand, just fall through to next_turn
+
+                game.next_turn()
+
+                # Reset timers for all players
+                for p in game.players:
+                    p['turn_time'] = 20.0
+
+                broadcast_game_state(game)
+
+                # ⚠️ CRITICAL: Do NOT call trigger_turn() here for AI —
+                # that would spawn a new background task that races with any existing one.
+                # Instead, directly spawn one clean task for the next player if they are AI.
+                next_player = game.players[game.current_turn]
+                if next_player.get('sid', '').startswith('ai_'):
+                    socketio.start_background_task(process_ai_action, game, game.current_turn)
+                else:
+                    # Human's turn: just broadcast state (timer will count down for them)
+                    socketio.emit('turn_update', {
+                        'current_turn': game.current_turn,
+                        'player_sid': next_player.get('sid', ''),
+                        'state': getattr(game, 'state', 'NORMAL')
+                    }, room=room_id)
+                continue
+
+
+        # 🚀 LIGHTWEIGHT TIMER SYNC (Avoids heavy full-state broadcast every second)
         timer_data = {
             'current_turn': game.current_turn,
-            'players': [{'turn_time': 20.0, 'bank_time': 60.0} for _ in game.players]
+            'players': [{'turn_time': p['turn_time'], 'bank_time': p['bank_time']} for p in game.players]
         }
         socketio.emit('timer_update', timer_data, room=room_id)
     
@@ -1588,6 +1655,21 @@ def is_port_in_use(port):
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('localhost', port)) == 0
+
+
+@socketio.on('auto_play_move')
+def on_auto_play(data=None):
+    game = find_game_by_sid(request.sid)
+    if game:
+        player_index = next((i for i, p in enumerate(game.players) if p.get('sid') == request.sid), None)
+        if player_index is not None:
+            # For human players, ensure they have a default difficulty/vocab for the AI logic
+            p = game.players[player_index]
+            if 'difficulty' not in p: p['difficulty'] = 'hard'
+            if 'vocab_limit' not in p: p['vocab_limit'] = 999999
+            
+            print(f'DEBUG: [AUTO_PLAY] Triggering AI logic for Human Player {player_index}')
+            socketio.start_background_task(process_ai_action, game, player_index)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
