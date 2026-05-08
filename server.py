@@ -1638,9 +1638,16 @@ def run_game_timer_loop(room_id):
         active_idx = game.current_turn
         player = game.players[active_idx]
         
-        if player['turn_time'] > 0:
+        # 🚀 AI Timeout Override: Force timeout shortly after ai_interval
+        ai_timeout_forced = False
+        if player.get('sid', '').startswith('ai_'):
+            elapsed = 20.0 - player.get('turn_time', 20.0)
+            if elapsed >= getattr(game, 'ai_interval', 1.5) + 0.5:
+                ai_timeout_forced = True
+                
+        if player['turn_time'] > 0 and not ai_timeout_forced:
             player['turn_time'] -= 0.1
-        elif player['bank_time'] > 0:
+        elif player['bank_time'] > 0 and not ai_timeout_forced:
             player['bank_time'] -= 0.1
         else:
             # ⏰ Time out! Force a random discard
