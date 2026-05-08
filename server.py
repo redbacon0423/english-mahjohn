@@ -993,8 +993,8 @@ def on_start_demo(data=None):
                 'wrong_moves': 0,
                 'protected_turns': 0, 
                 'penalty_turns': 0,
-                'difficulty': 'hard', 
-                'vocab_limit': int(total_words * 0.08), # 8% for demo/performance
+                'difficulty': 'normal', 
+                'vocab_limit': int(total_words * 0.04), # 4% for demo/performance (lowered to extend game)
                 'bank_time': 0.0, # Disable bank time jump in Demo
                 'turn_time': 20.0
             })
@@ -1067,7 +1067,7 @@ def on_discard(data=None):
 
 def schedule_demo_restart(room_id):
     """🤖 Auto-restart for Performance Mode after a delay."""
-    socketio.sleep(10) # Wait 10s to show results
+    socketio.sleep(4) # Faster restart for Performance Mode
     game = games.get(room_id)
     if game and getattr(game, 'demo_mode', False):
         print(f"DEBUG: [DEMO] Auto-restarting game in room {room_id}...")
@@ -1237,7 +1237,7 @@ def process_ai_action(game, ai_index):
         is_demo = getattr(game, 'demo_mode', False)
 
         # ⚡ Pre-decide whether to attempt Hu check (avoids unnecessary CPU work)
-        hu_chance = 0.20 if is_demo else {'easy': 0.05, 'normal': 0.15, 'hard': 0.35, 'nightmare': 0.75}.get(difficulty, 0.15)
+        hu_chance = 0.05 if is_demo else {'easy': 0.05, 'normal': 0.15, 'hard': 0.35, 'nightmare': 0.75}.get(difficulty, 0.15)
         will_check_hu = random.random() < hu_chance
 
         # 🧠 Vocabulary Limit — smaller in demo mode for speed
