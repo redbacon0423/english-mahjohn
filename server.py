@@ -152,6 +152,9 @@ class EnglishMahjongGame:
         self.hu_declaring_player = None
 
     def set_dictionary(self, dictionary: list[str]):
+        if getattr(self, 'word_index', None): 
+            return # 🚀 ANTI-STALL: Skip 300k word iteration if already built
+            
         self.dictionary = set(dictionary)
         self.word_index = {}
         self.word_index_by_len = {}
