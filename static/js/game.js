@@ -81,8 +81,7 @@ function playHuSound() {
         osc.start(now + i * 0.1); osc.stop(now + i * 0.1 + 0.5);
     });
 }
-function playWheelTick() { playSynthSound(1000, 0.02, 'square', 0.1); }
-function playWheelSuccess() { playSynthSound(1200, 0.5, 'triangle', 0.3); }
+
 function playDrawSound() { playSynthSound(900, 0.1, 'sine', 0.2); }
 function playDblClickSound() { playSynthSound(1500, 0.03, 'sine', 0.3); }
 function playTileSwapSound() { 
@@ -822,7 +821,7 @@ function triggerFX(type, targetPos = null) {
 
 // showRestrictionWheel removed as restrictions are now disabled
 
-function closeWheel() { document.getElementById('wheel-overlay')?.classList.add('hidden'); }
+
 function toggleRules() { document.getElementById('rules-overlay').classList.toggle('hidden'); }
 
 let currentInputCallback = null;
@@ -1055,13 +1054,7 @@ socket.on('my_hand', (data) => {
     
     renderBoard(); 
 });
-socket.on('start_restriction_wheel', (res) => {
-    // 🛡️ GLOBAL REMOVAL: Skip the wheel animation per user request
-    console.log("Restriction Wheel bypassed. Mode:", res.display);
-    // document.getElementById('restriction-mini').innerText = res.display;
-    // document.getElementById('game-status-panel').classList.remove('hidden');
-    // closeWheel();
-});
+
 socket.on('game_over', (data) => {
     const isMe = (data.winner === username);
     const overlay = document.getElementById('result-overlay');

@@ -111,13 +111,6 @@ print(f" * Server running on LAN: http://{LOCAL_IP}:5001")
 # 🎨 Exclude rare letters to increase game flow
 COMMON_LETTERS = "ABCDEFGHIJKLMNOPRSTUVW" # Exclude Q, X, Z, J, Y
 
-def generate_random_restriction():
-    # 🛡️ GLOBAL REMOVAL: All categorical and structural restrictions are deleted.
-    return {
-        'display': 'FREE MODE',
-        'rule': 'free'
-    }
-
 
 
 # ==========================================
@@ -132,9 +125,7 @@ class EnglishMahjongGame:
             'Y': 3, 'Z': 1
         }
         self.deck: list[dict[str, Any]] = []
-        self.round_word_index = {}
-        self.round_word_index_by_len = {}
-        self.restriction = None
+
         self.init_deck()
         self.game_started = False
         self.timer_active = False
@@ -211,7 +202,6 @@ class EnglishMahjongGame:
     def start_game(self):
         if len(self.players) < 2: return False
         self.init_deck()
-        self.prune_dictionary_for_round()
         
         self.discard_piles = [[] for _ in range(len(self.players))]
         self.last_discard = None
@@ -237,39 +227,6 @@ class EnglishMahjongGame:
             self.update_hu_cache(i)
             
         return True
-
-    def prune_dictionary_for_round(self):
-        """Pre-filter dictionary at round start to speed up lookups"""
-        self.round_word_index = {}
-        self.round_word_index_by_len = {}
-        
-        if not self.restriction:
-            self.round_word_index = self.word_index
-            self.round_word_index_by_len = self.word_index_by_len
-            return
-
-        # ⚡ Strategy: Iterate only once through the full index
-        # We use characters as keys to build the round-specific index
-        for char, lengths_dict in self.word_index.items():
-            for w_len, words in lengths_dict.items():
-                filtered = [w for w in words if self.validate_word(w, fast_check=True)]
-                if filtered:
-                    if char not in self.round_word_index: self.round_word_index[char] = {}
-                    if w_len not in self.round_word_index[char]: self.round_word_index[char][w_len] = []
-                    self.round_word_index[char][w_len].extend(filtered)
-                    
-                    if w_len not in self.round_word_index_by_len: self.round_word_index_by_len[w_len] = []
-                    # We use a set here to avoid duplicates if a word is added for multiple characters
-                    # (Wait, actually we can just use the unique words in word_index_by_len)
-
-        # Build round_word_index_by_len properly from unique words
-        for w_len, words in self.word_index_by_len.items():
-            filtered = [w for w in words if self.validate_word(w, fast_check=True)]
-            if filtered:
-                self.round_word_index_by_len[w_len] = filtered
-
-        count = sum(len(v) for v in self.round_word_index_by_len.values())
-        dprint(f"DEBUG: [PRUNE] Round dictionary pruned to {count} words.")
 
     def draw_tile(self):
         return self.deck.pop(0) if self.deck else None
@@ -410,10 +367,6 @@ class EnglishMahjongGame:
 
         return False
 
-    def validate_word(self, word, fast_check=False):
-        # 🛡️ GLOBAL REMOVAL: Always return True to allow any word in dictionary
-        return True
-
     def calculate_chi_options(self, player_index, last_tile):
         player = self.players[player_index]
         hand_letters = [t['value'].lower() for t in player['hand'] if t['type'] == 'letter']
@@ -446,10 +399,7 @@ class EnglishMahjongGame:
                                 break
                         
                         if possible:
-                            # 🚀 在大範圍搜尋時使用 fast_check，避免卡死
-                            if self.validate_word(word, fast_check=True):
-                                options.append(str(word).upper())
-                            
+                            options.append(str(word).upper())
         # 🚀 Sort by frequency before capping so common words always appear
         result = list(set(options))
         result.sort(key=lambda w: WORD_RANK.get(w.lower(), 999999))
@@ -469,11 +419,7 @@ class EnglishMahjongGame:
         word = str(word).lower()
         if word not in self.dictionary: return False, f"'{word.upper()}' is not in the dictionary."
         
-        # 🛡️ Final Restriction Check
-        if not self.validate_word(word):
-            dprint(f"DEBUG: [CHI_DENIED] Word '{word}' doesn't match restriction.")
-            return False, f"'{word.upper()}' does not match the current rule."
-            
+
         last_char = last_tile.get('value', '').lower()
         if last_char not in word: return False, f"The word must contain the discarded tile '{last_char.upper()}'!"
         
@@ -555,9 +501,7 @@ class EnglishMahjongGame:
         for w in words:
             if w not in self.dictionary:
                 return False, f"'{w.upper()}' is not in the dictionary."
-            if not self.validate_word(w):
-                restriction_display = self.restriction.get('display', '??') if self.restriction else '??'
-                return False, f"'{w.upper()}' does not match the current restriction ({restriction_display})."
+
             claimed_counts.update(w)
 
         for char, count in claimed_counts.items():
@@ -897,20 +841,13 @@ def initialize_game_start(game):
                 'can_hu': False
             })
 
-    # Select game restriction
-    if getattr(game, 'game_started', False):
-        print(f"DEBUG: [START] Game in room {game.room_id} already started. Skipping initialization.")
-        return False
-
-    restriction = generate_random_restriction()
     if game.start_game():
         game.timer_paused = True # Pause timer for wheel animation
         if not game.timer_active:
             game.timer_active = True
             socketio.start_background_task(run_game_timer_loop, game.room_id)
         
-        socketio.emit('start_restriction_wheel', restriction, room=game.room_id)
-        socketio.emit('message', {'msg': f'Game Started! Rule: {restriction["display"]}'}, room=game.room_id)
+        socketio.emit('message', {'msg': 'Game Started! Rule: FREE MODE'}, room=game.room_id)
         broadcast_game_state(game) 
         
         # Start timer and starting player draw instantly
@@ -1333,9 +1270,9 @@ def process_ai_action(game, ai_index):
             should_chi = random.random() > chi_skip_prob
             
             if options and should_chi:
-                # 🤖 AI intelligently chooses words matching restriction (using fast_check to avoid deep thinking)
+                # 🤖 AI intelligently chooses words
                 is_nightmare = (player.get('difficulty') == 'nightmare')
-                valid_options = [w for w in options if game.validate_word(w, fast_check=True)]
+                valid_options = options
                 
                 # 🌙 Nightmare Mode Filter: Exclude proper nouns
                 # (Already filtered globally from dictionary)
