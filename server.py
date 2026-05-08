@@ -581,9 +581,9 @@ class EnglishMahjongGame:
             player = self.players[player_index]
             hand = player.get('hand', [])
             
-            # 🛡️ Loophole Fix: If player has NO tiles in hand, they MUST have melds to win.
+            # 🛡️ Loophole Fix: If player has NO tiles in hand, they cannot Ron.
             if not hand:
-                player['can_hu'] = bool(player.get('melds'))
+                player['can_hu'] = False
                 return
             
             letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
@@ -611,8 +611,14 @@ class EnglishMahjongGame:
             dprint(f"DEBUG: [UPDATE_HU_CACHE] Error: {e}")
             player['can_hu'] = False
 
-    def AI_find_hu_partition(self, letters, items_count, current_melds=None, memo=None, vocab_limit=1000, is_nightmare=False, known_words=None):
+    def AI_find_hu_partition(self, letters, items_count, current_melds=None, memo=None, vocab_limit=1000, is_nightmare=False, known_words=None, call_cap=1000):
         if memo is None: memo = {'__calls__': 0}
+        
+        # 🚀 ANTI-STALL: Yield to eventlet to avoid freezing other players/timer
+        memo['__calls__'] += 1
+        if memo['__calls__'] % 10 == 0:
+            socketio.sleep(0)
+            
         hand_key = "".join(sorted(letters)) + f":{items_count}"
         if hand_key in memo: return memo[hand_key]
         
@@ -622,9 +628,8 @@ class EnglishMahjongGame:
             memo[hand_key] = None
             return None
 
-        # 🛡️ Anti-Lock: Cap max recursion to prevent hanging
-        memo['__calls__'] += 1
-        if memo['__calls__'] > 1000:
+        # 🛡️ Anti-Lock: Cap max recursion to prevent hanging (call_cap configurable per mode)
+        if memo['__calls__'] > call_cap:
             return None
             
         # 0. Base Case: Hand empty
@@ -653,9 +658,6 @@ class EnglishMahjongGame:
                     candidates = [w for w in candidates if w.lower() in known_words]
                 else:
                     candidates = [w for w in candidates if WORD_RANK.get(w.lower(), 999999) < vocab_limit]
-                
-                # 🌙 Nightmare Mode Extra Filter: Exclude proper nouns
-                # (Already filtered globally from dictionary)
                 
                 random.shuffle(candidates)
                 
@@ -687,13 +689,12 @@ class EnglishMahjongGame:
                             new_hand.extend([char] * count)
                             
                         # Recursively check remaining
-                        res = self.AI_find_hu_partition(new_hand, items_count - needed_wildcards, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words)
+                        res = self.AI_find_hu_partition(new_hand, items_count - needed_wildcards, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words, call_cap=call_cap)
                         if res is not None:
                             memo[hand_key] = res
                             return res
         else:
             # Only wildcards left (extremely rare)
-            # Try any word matching restriction from length 2 to target_len
             for length in range(min(10, target_len), 1, -1):
                 if length not in self.round_word_index_by_len: continue
                 
@@ -705,7 +706,7 @@ class EnglishMahjongGame:
                 random.shuffle(candidates)
                 for word in candidates:
                     if self.validate_word(word, fast_check=True):
-                        res = self.AI_find_hu_partition([], items_count - length, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words)
+                        res = self.AI_find_hu_partition([], items_count - length, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words, call_cap=call_cap)
                         if res is not None:
                             memo[hand_key] = res
                             return res
@@ -791,25 +792,31 @@ def on_join(data=None):
             }
             vocab_limit = limit_map.get(difficulty, limit_map['normal'])
             
-            for i in range(1, 4):
-                game.players.append({
-                    'name': f"AI {['Right', 'Top', 'Left'][i-1]}", 
-                    'sid': f"ai_{i}", 
-                    'hand': [], 
-                    'melds': [], 
-                    'items': [],  # 🚀 Added missing items list
-                    'hand_size': 0, 
-                    'wrong_moves': 0,
-                    'protected_turns': 0,
-                    'penalty_turns': 0,
-                    'difficulty': difficulty,
-                    'vocab_limit': vocab_limit,
-                    'bank_time': 60.0,
-                    'turn_time': 20.0,
-                    'can_hu': False # 🚀 Cache
-                })
-            # 🎡 Autostart single-player immediately as requested by user
-            initialize_game_start(game)
+            # 🚀 Check if AIs already exist (in case of reconnect)
+            ai_exists = any(p.get('sid', '').startswith('ai_') for p in game.players)
+            if not ai_exists:
+                for i in range(1, 4):
+                    game.players.append({
+                        'name': f"AI {['Right', 'Top', 'Left'][i-1]}", 
+                        'sid': f"ai_{i}", 
+                        'hand': [], 
+                        'melds': [], 
+                        'items': [],  # 🚀 Added missing items list
+                        'hand_size': 0, 
+                        'wrong_moves': 0,
+                        'protected_turns': 0,
+                        'penalty_turns': 0,
+                        'difficulty': difficulty,
+                        'vocab_limit': vocab_limit,
+                        'bank_time': 60.0,
+                        'turn_time': 20.0,
+                        'can_hu': False # 🚀 Cache
+                    })
+                # 🎡 Autostart single-player immediately as requested by user
+                initialize_game_start(game)
+            else:
+                # 🚀 Reconnected, just send game state
+                broadcast_game_state(game)
             return
         else:
             # 🌐 Multiplayer Logic
@@ -958,29 +965,37 @@ def on_start_demo(data=None):
         game.ai_interval = 1.5  # Fast default for Performance Mode
     sid_to_room[request.sid] = room_id
     
-    # Clear existing players and add 4 AI
-    game.players = []
-    ai_names = ["AI East", "AI South", "AI West", "AI North"]
-    total_words = len(WORDS)
-    for i in range(4):
-        game.players.append({
-            'name': ai_names[i], 
-            'sid': f"ai_demo_{room_id}_{i}", 
-            'hand': [], 
-            'melds': [], 
-            'items': [], 
-            'hand_size': 0, 
-            'wrong_moves': 0,
-            'protected_turns': 0, 
-            'penalty_turns': 0,
-            'difficulty': 'hard', 
-            'vocab_limit': int(total_words * 0.08), # 8% for demo/performance
-            'bank_time': 0.0, # Disable bank time jump in Demo
-            'turn_time': 20.0
-        })
-
-    print(f"DEBUG: [DEMO] Performance mode initialized in room {room_id}. ai_interval={game.ai_interval}s. Autostarting...")
-    game.is_performance_mode = True
+    # 🚀 Check if AIs already exist (in case of reconnect)
+    ai_exists = any(p.get('sid', '').startswith('ai_demo_') for p in game.players)
+    if not ai_exists:
+        # Clear existing players and add 4 AI
+        game.players = []
+        # 🚀 Bug Fix #4: Reset discard_piles properly for demo mode
+        game.discard_piles = []
+        
+        ai_names = ["AI East", "AI South", "AI West", "AI North"]
+        total_words = len(WORDS)
+        for i in range(4):
+            game.players.append({
+                'name': ai_names[i], 
+                'sid': f"ai_demo_{room_id}_{i}", 
+                'hand': [], 
+                'melds': [], 
+                'items': [], 
+                'hand_size': 0, 
+                'wrong_moves': 0,
+                'protected_turns': 0, 
+                'penalty_turns': 0,
+                'difficulty': 'hard', 
+                'vocab_limit': int(total_words * 0.08), # 8% for demo/performance
+                'bank_time': 0.0, # Disable bank time jump in Demo
+                'turn_time': 20.0
+            })
+        print(f"DEBUG: [DEMO] Performance mode initialized in room {room_id}. ai_interval={game.ai_interval}s. Autostarting...")
+        game.is_performance_mode = True
+    else:
+        # Reconnected, just send game state
+        broadcast_game_state(game)
     
     game.spectators.add(request.sid)
     initialize_game_start(game)
@@ -1024,6 +1039,18 @@ def on_discard(data=None):
     if tile_index is not None:
         success = game.discard(player_index, tile_index)
         if success:
+            # 🚀 Bug Fix: If human discards their last tile, they win automatically
+            player = game.players[player_index]
+            if len(player.get('hand', [])) == 0:
+                winning_words = player.get('melds', [])
+                game.game_started = False
+                socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name', 'Player'), 'is_hu': True}, room=game.room_id)
+                socketio.emit('game_over', {'winner': player.get('name', 'Player'), 'melds': winning_words, 'hand': []}, room=game.room_id)
+                socketio.emit('message', {'msg': f'🎉 {player.get("name", "Player")} wins by discarding their last tile!'}, room=game.room_id)
+                if getattr(game, 'demo_mode', False):
+                    socketio.start_background_task(schedule_demo_restart, game.room_id)
+                return
+
             game.next_turn()
             broadcast_game_state(game)  # broadcast AFTER next_turn so chi_options + WAITING_ACTION is included
             trigger_turn(game)
@@ -1200,24 +1227,33 @@ def process_ai_action(game, ai_index):
             trigger_turn(game)
             return
         difficulty = player.get('difficulty', 'normal')
-        
-        # 🧠 Consistent Vocabulary Limit across ALL modes based on difficulty (0.05% - 0.2% of the FULL dictionary)
+        is_demo = getattr(game, 'demo_mode', False)
+
+        # ⚡ Pre-decide whether to attempt Hu check (avoids unnecessary CPU work)
+        hu_chance = 0.20 if is_demo else {'easy': 0.05, 'normal': 0.15, 'hard': 0.35, 'nightmare': 0.75}.get(difficulty, 0.15)
+        will_check_hu = random.random() < hu_chance
+
+        # 🧠 Vocabulary Limit — smaller in demo mode for speed
         total_words_count = len(WORDS)
-        limit_map = {
-            'easy': max(1, int(total_words_count * 0.01)),      
-            'normal': max(1, int(total_words_count * 0.05)),    
-            'hard': max(1, int(total_words_count * 0.10)),      
-            'nightmare': max(1, int(total_words_count * 0.20))  
-        }
-        vocab_limit = limit_map.get(difficulty, limit_map['normal'])
-        
-        # 🎲 Build AI known words by randomly sampling from the FULL dictionary every time it acts
-        # This implements the user's "Random Draw" (Option B) logic.
-        try:
-            ai_known_words = set(random.sample(WORDS, vocab_limit))
-        except ValueError:
-            # Fallback if vocab_limit is somehow larger than WORDS
-            ai_known_words = set(WORDS)
+        if is_demo:
+            vocab_limit = max(1, int(total_words_count * 0.04))  # ⚡ Fixed 4% in demo
+        else:
+            limit_map = {
+                'easy':      max(1, int(total_words_count * 0.01)),
+                'normal':    max(1, int(total_words_count * 0.05)),
+                'hard':      max(1, int(total_words_count * 0.08)),
+                'nightmare': max(1, int(total_words_count * 0.15)),
+            }
+            vocab_limit = limit_map.get(difficulty, limit_map['normal'])
+
+        # 🎲 Build AI known words ONLY if we'll actually do Hu check
+        if will_check_hu:
+            try:
+                ai_known_words = set(random.sample(WORDS, min(vocab_limit, len(WORDS))))
+            except ValueError:
+                ai_known_words = set(WORDS)
+        else:
+            ai_known_words = None
 
         hand = player.get('hand', [])
         
@@ -1225,8 +1261,8 @@ def process_ai_action(game, ai_index):
         letter_indices = [i for i, t in enumerate(hand) if isinstance(t, dict) and t.get('type') == 'letter']
         
         # 0. AI Auto-Hu detection (Win priority)
-        hand_letters = [t.get('value', '').lower() for t in player.get('hand', []) if isinstance(t, dict) and t.get('type') == 'letter']
-        hand_items_count = len([t for t in player.get('hand', []) if isinstance(t, dict) and t.get('type') == 'item'])
+        hand_letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
+        hand_items_count = len([t for t in hand if isinstance(t, dict) and t.get('type') == 'item'])
         
         # 🛡️ Check for Hu (Winning) on another player's discard
         is_waiting_chi = (getattr(game, 'state', 'NORMAL') == 'WAITING_ACTION' and game.current_turn == ai_index)
@@ -1235,21 +1271,24 @@ def process_ai_action(game, ai_index):
             if tile.get('type') == 'letter':
                 hand_letters.append(tile.get('value', '').lower())
         
-        # 🧪 Execute Hu partition analysis (Only if hand is large enough to be possibly winning)
+        # ⚡ Hu check: only if pre-decided AND hand is large enough
         hu_set = None
         target_size = len(hand_letters) + hand_items_count
-        if target_size >= 2:
-            is_nightmare = (player.get('difficulty') == 'nightmare')
-            
-            # 📉 Lower AI Hu Rate: Add a chance to just "miss" the Hu opportunity
-            hu_chance = {'easy': 0.05, 'normal': 0.15, 'hard': 0.40, 'nightmare': 0.85}.get(difficulty, 0.15)
-            if getattr(game, 'demo_mode', False):
-                hu_chance = 0.35 # Fixed moderate rate for demo mode
-                
-            if random.random() < hu_chance:
-                hu_set = game.AI_find_hu_partition(hand_letters, hand_items_count, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=ai_known_words)
         
-        if hu_set:
+        if len(player.get('hand', [])) == 0 and player.get('melds'):
+            # 🚀 Fix: If AI ate all hand tiles, it MUST Hu instantly!
+            hu_set = []
+        elif will_check_hu and target_size >= 2 and ai_known_words:
+            is_nightmare = (difficulty == 'nightmare')
+            # ⚡ Demo mode: low recursion cap to avoid blocking eventlet loop
+            call_cap = 80 if is_demo else 400
+            hu_set = game.AI_find_hu_partition(
+                hand_letters, hand_items_count,
+                vocab_limit=vocab_limit, is_nightmare=is_nightmare,
+                known_words=ai_known_words, call_cap=call_cap
+            )
+        
+        if hu_set is not None:
             winning_words = player.get('melds', []) + hu_set
             
             # 🚀 If Hu on discard, remove from discard pile
@@ -1303,6 +1342,17 @@ def process_ai_action(game, ai_index):
                         
                     success, _ = game.perform_chi(ai_index, chosen_word)
                     if success:
+                        # 🚀 Foolproof Mechanism: If AI hand is empty after Chi, trigger HU automatically
+                        if len(player.get('hand', [])) == 0:
+                            winning_words = player.get('melds', [])
+                            game.game_started = False
+                            socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name', 'AI'), 'is_hu': True}, room=game.room_id)
+                            socketio.emit('game_over', {'winner': player.get('name', 'AI'), 'melds': winning_words, 'hand': []}, room=game.room_id)
+                            socketio.emit('message', {'msg': f'🎉 {player.get("name", "AI")} wins with automatic HU after CHI!'}, room=game.room_id)
+                            if getattr(game, 'demo_mode', False):
+                                socketio.start_background_task(schedule_demo_restart, game.room_id)
+                            return
+                            
                         socketio.emit('broadcast_meld_anim', {'word': str(chosen_word).upper(), 'player': player.get('name', 'AI'), 'is_hu': False}, room=game.room_id)
                         broadcast_game_state(game)
                         trigger_turn(game)
@@ -1353,6 +1403,18 @@ def process_ai_action(game, ai_index):
             dprint(f"DEBUG: [AI_DISCARD] Player {ai_index} ({difficulty}) discarding index {tile_idx} ({tile_val})")
             if game.discard(ai_index, tile_idx):
                 socketio.emit('message', {'msg': f'🤖 {player.get("name", "AI")} discarded {tile_val}'}, room=game.room_id)
+                
+                # 🚀 Bug Fix: If AI discards their last tile, they win automatically
+                if len(player.get('hand', [])) == 0:
+                    winning_words = player.get('melds', [])
+                    game.game_started = False
+                    socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name', 'AI'), 'is_hu': True}, room=game.room_id)
+                    socketio.emit('game_over', {'winner': player.get('name', 'AI'), 'melds': winning_words, 'hand': []}, room=game.room_id)
+                    socketio.emit('message', {'msg': f'🎉 {player.get("name", "AI")} wins by discarding their last tile!'}, room=game.room_id)
+                    if getattr(game, 'demo_mode', False):
+                        socketio.start_background_task(schedule_demo_restart, game.room_id)
+                    return
+                
                 game.next_turn()
                 broadcast_game_state(game)
                 trigger_turn(game)

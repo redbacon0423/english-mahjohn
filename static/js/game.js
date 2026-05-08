@@ -117,7 +117,7 @@ function startSinglePlayer() {
     });
     
     document.getElementById('menu-overlay').classList.add('hidden');
-    document.getElementById('chat-container').classList.add('hidden');
+    document.getElementById('chat-container')?.classList.add('hidden');
     
     showToast("👤 SINGLE PLAYER READY");
 }
@@ -153,6 +153,7 @@ function startPerformanceMode() {
     document.body.classList.add('spectator-mode');
     document.getElementById('spectator-controls').classList.remove('hidden');
     document.getElementById('menu-overlay').classList.add('hidden');
+    document.getElementById('chat-container')?.classList.add('hidden');
     document.getElementById('reveal-hands-toggle').checked = true; // Auto-reveal hands for demo
     showHands = true;
     
