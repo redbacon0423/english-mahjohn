@@ -328,8 +328,13 @@ class EnglishMahjongGame:
                 return
         
         # ⏲️ Reset turn timer for the acting player
+        # 🚀 AI players get ai_interval*2+1s budget (enough for one AI cycle + safety buffer)
+        ai_interval = getattr(self, 'ai_interval', 5.0)
         for p in self.players:
-            p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+            if p.get('sid', '').startswith('ai_'):
+                p['turn_time'] = ai_interval * 2 + 1.0
+            else:
+                p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
 
 
 
@@ -361,8 +366,12 @@ class EnglishMahjongGame:
                     socketio.start_background_task(schedule_demo_restart, self.room_id)
             
             # Reset turn timers
+            ai_interval = getattr(self, 'ai_interval', 5.0)
             for p in self.players:
-                p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+                if p.get('sid', '').startswith('ai_'):
+                    p['turn_time'] = ai_interval * 2 + 1.0
+                else:
+                    p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
             return True
 
         return False
@@ -1575,22 +1584,16 @@ def run_game_timer_loop(room_id):
         active_idx = game.current_turn
         player = game.players[active_idx]
         
-        # 🚀 AI Timeout Override: Force timeout after their configured interval
-        ai_timeout_forced = False
-        if player.get('sid', '').startswith('ai_'):
-            # turn_time counts DOWN from 20. Timeout when it drops below (20 - ai_interval - 0.5).
-            threshold = 20.0 - getattr(game, 'ai_interval', 1.5) - 0.5
-            if player.get('turn_time', 20.0) <= threshold:
-                ai_timeout_forced = True
-
-        if player['turn_time'] > 0 and not ai_timeout_forced:
+        # 🚀 All-mode forced action: AI and human timer both count down naturally.
+        # AI players already have a short turn_time (ai_interval*2+1s) so they time out quickly.
+        if player['turn_time'] > 0:
             player['turn_time'] -= 0.1
-        elif player['bank_time'] > 0 and not ai_timeout_forced:
+        elif player.get('bank_time', 0) > 0 and not player.get('sid', '').startswith('ai_'):
+            # Only human players use bank_time as overflow; AI has no bank time buffer
             player['bank_time'] -= 0.1
         else:
-            # ⏰ Time out! Force a random discard
-
-            dprint(f"DEBUG: [TIMER] Player {active_idx} timed out! Auto-discarding.")
+            # ⏰ Time out! Force action — works for ALL modes (demo, single, multi)
+            dprint(f"DEBUG: [TIMER] Player {active_idx} ({player.get('name')}) timed out! Forcing action.")
             if game.state == 'WAITING_ACTION':
                 game.skip_action(active_idx)
             else:
@@ -1603,8 +1606,12 @@ def run_game_timer_loop(room_id):
                     game.next_turn()
             
             # ⏲️ Reset turn timer for next player after timeout
+            ai_interval = getattr(game, 'ai_interval', 5.0)
             for p in game.players:
-                p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+                if p.get('sid', '').startswith('ai_'):
+                    p['turn_time'] = ai_interval * 2 + 1.0
+                else:
+                    p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
             
             trigger_turn(game)
             broadcast_game_state(game)
