@@ -213,7 +213,7 @@ class EnglishMahjongGame:
             p['hand'] = []
             p['melds'] = []
             p['bank_time'] = 60.0
-            p['turn_time'] = 20.0
+            p['turn_time'] = getattr(self, 'ai_interval', 1.5) if p.get('sid', '').startswith('ai_') else 20.0
             for _ in range(16):
                 t = self.draw_tile()
                 if t: p['hand'].append(t)
@@ -329,7 +329,7 @@ class EnglishMahjongGame:
         
         # ⏲️ Reset turn timer for the acting player
         for p in self.players:
-            p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+            p['turn_time'] = getattr(self, 'ai_interval', 1.5) if p.get('sid', '').startswith('ai_') else 20.0
 
 
 
@@ -362,7 +362,7 @@ class EnglishMahjongGame:
             
             # Reset turn timers
             for p in self.players:
-                p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+                p['turn_time'] = getattr(self, 'ai_interval', 1.5) if p.get('sid', '').startswith('ai_') else 20.0
             return True
 
         return False
@@ -936,7 +936,7 @@ def on_start_demo(data=None):
                 'difficulty': 'normal', 
                 'vocab_limit': int(total_words * 0.015), # 1.5% for demo/performance (lowered to extend game)
                 'bank_time': 0.0, # Disable bank time jump in Demo
-                'turn_time': 20.0
+                'turn_time': getattr(game, 'ai_interval', 1.5)
             })
         print(f"DEBUG: [DEMO] Performance mode initialized in room {room_id}. ai_interval={game.ai_interval}s. Autostarting...")
         game.is_performance_mode = True
@@ -1161,7 +1161,8 @@ def process_ai_action(game, ai_index):
         
         # 🚀 Use custom interval if set, otherwise fallback to difficulty-based delay
         delay = getattr(game, 'ai_interval', 1.5)
-        socketio.sleep(delay)
+        # Sleep slightly less than the full interval so AI acts before forced timeout
+        socketio.sleep(max(0.1, delay - 0.4))
         
         if not getattr(game, 'game_started', False): return
         if game.current_turn != ai_index: return
@@ -1575,16 +1576,9 @@ def run_game_timer_loop(room_id):
         active_idx = game.current_turn
         player = game.players[active_idx]
         
-        # 🚀 AI Timeout Override: Force timeout shortly after ai_interval
-        ai_timeout_forced = False
-        if player.get('sid', '').startswith('ai_'):
-            elapsed = 20.0 - player.get('turn_time', 20.0)
-            if elapsed >= getattr(game, 'ai_interval', 1.5) + 0.5:
-                ai_timeout_forced = True
-                
-        if player['turn_time'] > 0 and not ai_timeout_forced:
+        if player['turn_time'] > 0:
             player['turn_time'] -= 0.1
-        elif player['bank_time'] > 0 and not ai_timeout_forced:
+        elif player['bank_time'] > 0:
             player['bank_time'] -= 0.1
         else:
             # ⏰ Time out! Force a random discard
@@ -1603,7 +1597,7 @@ def run_game_timer_loop(room_id):
             
             # ⏲️ Reset turn timer for next player after timeout
             for p in game.players:
-                p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+                p['turn_time'] = getattr(game, 'ai_interval', 1.5) if p.get('sid', '').startswith('ai_') else 20.0
             
             trigger_turn(game)
             broadcast_game_state(game)
