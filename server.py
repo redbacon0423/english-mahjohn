@@ -369,7 +369,7 @@ class EnglishMahjongGame:
 
     def calculate_chi_options(self, player_index, last_tile):
         player = self.players[player_index]
-        hand_letters = [t.get('value', '').lower() for t in player.get('hand', []) if t.get('type') == 'letter']
+        hand_letters = [t['value'].lower() for t in player['hand'] if t['type'] == 'letter']
         target_char = last_tile.get('value', '').lower()
         
         hand_counts = {}
@@ -588,11 +588,11 @@ class EnglishMahjongGame:
             target_char = letters[0]
             
             # Find all words containing this letter from dict cache
-            if target_char not in self.word_index:
+            if target_char not in self.round_word_index:
                 memo[hand_key] = None
                 return None
                 
-            char_dict = self.word_index[target_char]
+            char_dict = self.round_word_index[target_char]
             
             # Try from longest words first (Greedy)
             lengths = sorted(char_dict.keys(), reverse=True)
@@ -612,6 +612,8 @@ class EnglishMahjongGame:
                 candidates = candidates[:30]
                 
                 for word in candidates:
+                    if not self.validate_word(word, fast_check=True): continue
+                    
                     # Check if letters are enough (considering wildcards)
                     word_counts = Counter(word)
                     hand_counts = Counter(letters)
@@ -644,9 +646,9 @@ class EnglishMahjongGame:
         else:
             # Only wildcards left (extremely rare)
             for length in range(min(10, target_len), 1, -1):
-                if length not in self.word_index_by_len: continue
+                if length not in self.round_word_index_by_len: continue
                 
-                candidates = list(self.word_index_by_len[length])
+                candidates = list(self.round_word_index_by_len[length])
                 if known_words is not None:
                     candidates = [w for w in candidates if w.lower() in known_words]
                 else:
@@ -657,10 +659,11 @@ class EnglishMahjongGame:
                 candidates = candidates[:30]
                 
                 for word in candidates:
-                    res = self.AI_find_hu_partition([], items_count - length, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words, call_cap=call_cap)
-                    if res is not None:
-                        memo[hand_key] = res
-                        return res
+                    if self.validate_word(word, fast_check=True):
+                        res = self.AI_find_hu_partition([], items_count - length, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words, call_cap=call_cap)
+                        if res is not None:
+                            memo[hand_key] = res
+                            return res
 
         memo[hand_key] = None
         return None
@@ -1585,30 +1588,55 @@ def run_game_timer_loop(room_id):
         elif player['bank_time'] > 0 and not ai_timeout_forced:
             player['bank_time'] -= 0.1
         else:
-            # ⏰ Time out! Force a random discard
-
-            dprint(f"DEBUG: [TIMER] Player {active_idx} timed out! Auto-discarding.")
+            # ⏰ Time out! Force action immediately
+            dprint(f"DEBUG: [TIMER] Player {active_idx} timed out! is_AI={player.get('sid','').startswith('ai_')}, state={game.state}")
+            
             if game.state == 'WAITING_ACTION':
                 game.skip_action(active_idx)
+                # After skip_action, next_turn logic already ran inside skip_action
+                # Reset timers for all players
+                for p in game.players:
+                    p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+                broadcast_game_state(game)
+                # Only trigger AI if next player is AI (avoid duplicate tasks)
+                next_player = game.players[game.current_turn]
+                if next_player.get('sid', '').startswith('ai_'):
+                    socketio.start_background_task(process_ai_action, game, game.current_turn)
+                continue
+
             else:
-                # Discard random letter tile
+                # NORMAL state: force discard
                 hand = player.get('hand', [])
                 if hand:
                     letter_indices = [i for i, t in enumerate(hand) if isinstance(t, dict) and t.get('type') == 'letter']
                     discard_idx = random.choice(letter_indices) if letter_indices else 0
                     game.discard(active_idx, discard_idx)
-                    game.next_turn()
                 else:
-                    game.next_turn()
-            
-            # ⏲️ Reset turn timer for next player after timeout
-            for p in game.players:
-                p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
-            
-            trigger_turn(game)
-            broadcast_game_state(game)
-            # 🚀 FIX: Do NOT 'return' here, otherwise the timer loop dies forever!
-            continue
+                    pass  # empty hand, just fall through to next_turn
+
+                game.next_turn()
+
+                # Reset timers for all players
+                for p in game.players:
+                    p['turn_time'] = 20.0 if p.get('bank_time', 0) > 0 else 0.0
+
+                broadcast_game_state(game)
+
+                # ⚠️ CRITICAL: Do NOT call trigger_turn() here for AI —
+                # that would spawn a new background task that races with any existing one.
+                # Instead, directly spawn one clean task for the next player if they are AI.
+                next_player = game.players[game.current_turn]
+                if next_player.get('sid', '').startswith('ai_'):
+                    socketio.start_background_task(process_ai_action, game, game.current_turn)
+                else:
+                    # Human's turn: just broadcast state (timer will count down for them)
+                    socketio.emit('turn_update', {
+                        'current_turn': game.current_turn,
+                        'player_sid': next_player.get('sid', ''),
+                        'state': getattr(game, 'state', 'NORMAL')
+                    }, room=room_id)
+                continue
+
 
         # 🚀 LIGHTWEIGHT TIMER SYNC (Avoids heavy full-state broadcast every second)
         timer_data = {
