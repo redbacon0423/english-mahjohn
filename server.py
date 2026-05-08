@@ -369,7 +369,7 @@ class EnglishMahjongGame:
 
     def calculate_chi_options(self, player_index, last_tile):
         player = self.players[player_index]
-        hand_letters = [t['value'].lower() for t in player['hand'] if t['type'] == 'letter']
+        hand_letters = [t.get('value', '').lower() for t in player.get('hand', []) if t.get('type') == 'letter']
         target_char = last_tile.get('value', '').lower()
         
         hand_counts = {}
@@ -588,11 +588,11 @@ class EnglishMahjongGame:
             target_char = letters[0]
             
             # Find all words containing this letter from dict cache
-            if target_char not in self.round_word_index:
+            if target_char not in self.word_index:
                 memo[hand_key] = None
                 return None
                 
-            char_dict = self.round_word_index[target_char]
+            char_dict = self.word_index[target_char]
             
             # Try from longest words first (Greedy)
             lengths = sorted(char_dict.keys(), reverse=True)
@@ -612,8 +612,6 @@ class EnglishMahjongGame:
                 candidates = candidates[:30]
                 
                 for word in candidates:
-                    if not self.validate_word(word, fast_check=True): continue
-                    
                     # Check if letters are enough (considering wildcards)
                     word_counts = Counter(word)
                     hand_counts = Counter(letters)
@@ -646,9 +644,9 @@ class EnglishMahjongGame:
         else:
             # Only wildcards left (extremely rare)
             for length in range(min(10, target_len), 1, -1):
-                if length not in self.round_word_index_by_len: continue
+                if length not in self.word_index_by_len: continue
                 
-                candidates = list(self.round_word_index_by_len[length])
+                candidates = list(self.word_index_by_len[length])
                 if known_words is not None:
                     candidates = [w for w in candidates if w.lower() in known_words]
                 else:
@@ -659,11 +657,10 @@ class EnglishMahjongGame:
                 candidates = candidates[:30]
                 
                 for word in candidates:
-                    if self.validate_word(word, fast_check=True):
-                        res = self.AI_find_hu_partition([], items_count - length, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words, call_cap=call_cap)
-                        if res is not None:
-                            memo[hand_key] = res
-                            return res
+                    res = self.AI_find_hu_partition([], items_count - length, (current_melds or []) + [word.upper()], memo, vocab_limit=vocab_limit, is_nightmare=is_nightmare, known_words=known_words, call_cap=call_cap)
+                    if res is not None:
+                        memo[hand_key] = res
+                        return res
 
         memo[hand_key] = None
         return None
