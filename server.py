@@ -1597,9 +1597,11 @@ def run_game_timer_loop(room_id):
                 # Discard random letter tile
                 hand = player.get('hand', [])
                 if hand:
-                    letter_indices = [i for i, t in enumerate(hand) if t.get('type') == 'letter']
+                    letter_indices = [i for i, t in enumerate(hand) if isinstance(t, dict) and t.get('type') == 'letter']
                     discard_idx = random.choice(letter_indices) if letter_indices else 0
                     game.discard(active_idx, discard_idx)
+                    game.next_turn()
+                else:
                     game.next_turn()
             
             # ⏲️ Reset turn timer for next player after timeout
