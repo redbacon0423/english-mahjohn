@@ -843,10 +843,6 @@ def initialize_game_start(game):
 
     if game.start_game():
         game.timer_paused = True # Pause timer for wheel animation
-        if not game.timer_active:
-            game.timer_active = True
-            socketio.start_background_task(run_game_timer_loop, game.room_id)
-        
         socketio.emit('message', {'msg': 'Game Started! Rule: FREE MODE'}, room=game.room_id)
         broadcast_game_state(game) 
         
@@ -1159,8 +1155,8 @@ def process_ai_action(game, ai_index):
         player = game.players[ai_index]
         difficulty = player.get('difficulty', 'normal')
         
-        # 🚀 Use custom interval if set, otherwise fallback to difficulty-based delay
-        delay = getattr(game, 'ai_interval', 1.5)
+        # 🚀 Hardcoded fixed delay to prevent any timer overlap bugs
+        delay = 1.0
         socketio.sleep(delay)
         
         if not getattr(game, 'game_started', False): return
@@ -1522,18 +1518,7 @@ def on_cheat_hu(data=None):
 
 
 
-@socketio.on('update_ai_interval')
-def on_update_ai_interval(data):
-    room_id = data.get('room') or sid_to_room.get(request.sid)
-    game = games.get(room_id) if room_id else None
-    
-    if game:
-        val = data.get('interval', 5.0)
-        try:
-            game.ai_interval = float(val)
-            print(f"DEBUG: [AI_INTERVAL] Updated in room {game.room_id} to {game.ai_interval}s")
-            socketio.emit('message', {'msg': f'AI Speed set to {game.ai_interval}s'}, room=game.room_id)
-        except: pass
+
 
 @socketio.on('chat_message')
 def on_chat_message(data):
@@ -1562,94 +1547,7 @@ def on_disconnect():
                 game.spectators.remove(request.sid)
         del sid_to_room[request.sid]
 
-def run_game_timer_loop(room_id):
-    """
-    🕒 Main game timer loop
-    """
-    while True:
-        socketio.sleep(0.1) # High resolution for smooth countdown
-        game = games.get(room_id)
-        if not game or not getattr(game, 'game_started', False): break
-        if getattr(game, 'timer_paused', False): continue
-        
-        active_idx = game.current_turn
-        player = game.players[active_idx]
-        
-        # 🚀 AI Timeout Override: Force timeout after their configured interval
-        ai_timeout_forced = False
-        if player.get('sid', '').startswith('ai_'):
-            # turn_time counts DOWN from 20. Timeout when it drops below (20 - ai_interval - 0.5).
-            threshold = 20.0 - getattr(game, 'ai_interval', 1.5) - 0.5
-            if player.get('turn_time', 20.0) <= threshold:
-                ai_timeout_forced = True
 
-        if player['turn_time'] > 0 and not ai_timeout_forced:
-            player['turn_time'] -= 0.1
-        elif player['bank_time'] > 0 and not ai_timeout_forced:
-            player['bank_time'] -= 0.1
-        else:
-            # ⏰ Time out! Force action immediately
-            dprint(f"DEBUG: [TIMER] Player {active_idx} timed out! is_AI={player.get('sid','').startswith('ai_')}, state={game.state}")
-            
-            if game.state == 'WAITING_ACTION':
-                game.skip_action(active_idx)
-                # After skip_action, next_turn logic already ran inside skip_action
-                # Reset timers for all players
-                for p in game.players:
-                    p['turn_time'] = 20.0
-                broadcast_game_state(game)
-                # Only trigger AI if next player is AI (avoid duplicate tasks)
-                next_player = game.players[game.current_turn]
-                if next_player.get('sid', '').startswith('ai_'):
-                    socketio.start_background_task(process_ai_action, game, game.current_turn)
-                continue
-
-            else:
-                # NORMAL state: force discard
-                hand = player.get('hand', [])
-                if hand:
-                    letter_indices = [i for i, t in enumerate(hand) if isinstance(t, dict) and t.get('type') == 'letter']
-                    discard_idx = random.choice(letter_indices) if letter_indices else 0
-                    game.discard(active_idx, discard_idx)
-                else:
-                    pass  # empty hand, just fall through to next_turn
-
-                game.next_turn()
-
-                # Reset timers for all players
-                for p in game.players:
-                    p['turn_time'] = 20.0
-
-                broadcast_game_state(game)
-
-                # ⚠️ CRITICAL: Do NOT call trigger_turn() here for AI —
-                # that would spawn a new background task that races with any existing one.
-                # Instead, directly spawn one clean task for the next player if they are AI.
-                next_player = game.players[game.current_turn]
-                if next_player.get('sid', '').startswith('ai_'):
-                    socketio.start_background_task(process_ai_action, game, game.current_turn)
-                else:
-                    # Human's turn: just broadcast state (timer will count down for them)
-                    socketio.emit('turn_update', {
-                        'current_turn': game.current_turn,
-                        'player_sid': next_player.get('sid', ''),
-                        'state': getattr(game, 'state', 'NORMAL')
-                    }, room=room_id)
-                continue
-
-
-        # 🚀 LIGHTWEIGHT TIMER SYNC (Avoids heavy full-state broadcast every second)
-        timer_data = {
-            'current_turn': game.current_turn,
-            'players': [{'turn_time': p['turn_time'], 'bank_time': p['bank_time']} for p in game.players]
-        }
-        socketio.emit('timer_update', timer_data, room=room_id)
-    
-    # 🚀 FIX: Reset timer_active when loop breaks so the next game can start the timer
-    game = games.get(room_id)
-    if game:
-        game.timer_active = False
-        dprint(f"DEBUG: [TIMER] Loop ended for room {room_id}. timer_active reset to False.")
 
 def is_port_in_use(port):
     import socket
