@@ -136,7 +136,7 @@ class EnglishMahjongGame:
         self.last_discard = None
         self.current_turn = 0
         self.state = 'WAITING'
-        self.demo_mode = False 
+        self.demo_mode = False  # kept for compat, always False
         self.ai_interval = 5.0 
         self.current_chi_options = {} # 🚀 Fix: Initialize to prevent crash in lobby
         self.saved_state = None
@@ -323,8 +323,7 @@ class EnglishMahjongGame:
                 print("DEBUG: [NEXT_TURN] Deck empty! Game over.")
                 socketio.emit('game_over', {'winner': 'Nobody (Draw)', 'melds': [], 'hand': []}, room=self.room_id)
                 self.game_started = False
-                if getattr(self, 'demo_mode', False):
-                    socketio.start_background_task(schedule_demo_restart, self.room_id)
+
                 return
         
         # ⏲️ Reset turn timer for the acting player
@@ -357,8 +356,7 @@ class EnglishMahjongGame:
                 dprint("DEBUG: [SKIP] Deck empty! Game over.")
                 socketio.emit('game_over', {'winner': 'Nobody (Draw)', 'melds': [], 'hand': []}, room=self.room_id)
                 self.game_started = False
-                if getattr(self, 'demo_mode', False):
-                    socketio.start_background_task(schedule_demo_restart, self.room_id)
+
             
             # Reset turn timers
             for p in self.players:
@@ -842,11 +840,13 @@ def initialize_game_start(game):
             })
 
     if game.start_game():
-        game.timer_paused = True # Pause timer for wheel animation
+        game.timer_paused = True
+        if not getattr(game, 'loop_active', False):
+            game.loop_active = True
+            socketio.start_background_task(run_game_loop, game.room_id)
         socketio.emit('message', {'msg': 'Game Started! Rule: FREE MODE'}, room=game.room_id)
-        broadcast_game_state(game) 
-        
-        # Start timer and starting player draw, then trigger first turn
+        broadcast_game_state(game)
+
         def instant_start():
             start_p = game.current_turn
             if len(game.players[start_p]['hand']) == 16:
@@ -856,9 +856,7 @@ def initialize_game_start(game):
                     socketio.emit('message', {'msg': f'{game.players[start_p]["name"]} drew the first tile.'}, room=game.room_id)
             game.timer_paused = False
             broadcast_game_state(game)
-            # 🚨 Trigger AI ONLY after the tile has been drawn so hand is never empty
-            trigger_turn(game)
-            
+
         socketio.start_background_task(instant_start)
         return True
     return False
@@ -888,61 +886,6 @@ def on_start(data=None):
     else:
         print(f"DEBUG: [START] CRITICAL - No game found for sid {request.sid} or room {request_room}")
         socketio.emit('error', {'msg': 'Failed to start game: Room not found. Please try refreshing.'}, room=request.sid)
-
-@socketio.on('start_demo_mode')
-def on_start_demo(data=None):
-    """🤖 Performance Mode: 4 AI players play automatically in a loop."""
-    room_id = str(data.get('room', 'demo_room')) if data else 'demo_room'
-    join_room(room_id)
-    
-    if room_id not in games:
-        games[room_id] = EnglishMahjongGame()
-        games[room_id].set_dictionary(WORDS)
-        games[room_id].room_id = room_id
-    
-    game = games[room_id]
-    game.demo_mode = True
-    # 🚀 Bug Fix #1: Always build word index so AI can find hu partitions
-    game.set_dictionary(WORDS)
-    # 🚀 Bug Fix #2: Preserve slider-set interval; only default to 1.5 on first launch
-    if not hasattr(game, 'ai_interval') or game.ai_interval == 5.0:
-        game.ai_interval = 1.5  # Fast default for Performance Mode
-    sid_to_room[request.sid] = room_id
-    
-    # 🚀 Check if AIs already exist (in case of reconnect)
-    ai_exists = any(p.get('sid', '').startswith('ai_demo_') for p in game.players)
-    if not ai_exists:
-        # Clear existing players and add 4 AI
-        game.players = []
-        # 🚀 Bug Fix #4: Reset discard_piles properly for demo mode
-        game.discard_piles = []
-        
-        ai_names = ["AI East", "AI South", "AI West", "AI North"]
-        total_words = len(WORDS)
-        for i in range(4):
-            game.players.append({
-                'name': ai_names[i], 
-                'sid': f"ai_demo_{room_id}_{i}", 
-                'hand': [], 
-                'melds': [], 
-                'items': [], 
-                'hand_size': 0, 
-                'wrong_moves': 0,
-                'protected_turns': 0, 
-                'penalty_turns': 0,
-                'difficulty': 'normal', 
-                'vocab_limit': int(total_words * 0.015), # 1.5% for demo/performance (lowered to extend game)
-                'bank_time': 0.0, # Disable bank time jump in Demo
-                'turn_time': 20.0
-            })
-        print(f"DEBUG: [DEMO] Performance mode initialized in room {room_id}. ai_interval={game.ai_interval}s. Autostarting...")
-        game.is_performance_mode = True
-    else:
-        # Reconnected, just send game state
-        broadcast_game_state(game)
-    
-    game.spectators.add(request.sid)
-    initialize_game_start(game)
 
 
 
@@ -988,11 +931,9 @@ def on_discard(data=None):
             if len(player.get('hand', [])) == 0:
                 winning_words = player.get('melds', [])
                 game.game_started = False
-                socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name', 'Player'), 'is_hu': True}, room=game.room_id)
-                socketio.emit('game_over', {'winner': player.get('name', 'Player'), 'melds': winning_words, 'hand': []}, room=game.room_id)
-                socketio.emit('message', {'msg': f'🎉 {player.get("name", "Player")} wins by discarding their last tile!'}, room=game.room_id)
-                if getattr(game, 'demo_mode', False):
-                    socketio.start_background_task(schedule_demo_restart, game.room_id)
+                socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name','Player'), 'is_hu': True}, room=game.room_id)
+                socketio.emit('game_over', {'winner': player.get('name','Player'), 'melds': winning_words, 'hand': []}, room=game.room_id)
+                socketio.emit('message', {'msg': f'🎉 {player.get("name","Player")} wins!'}, room=game.room_id)
                 return
 
             game.next_turn()
@@ -1002,15 +943,6 @@ def on_discard(data=None):
             socketio.emit('error', {'msg': f'Cannot play this card! (Index: {tile_index})'}, room=request.sid)
             socketio.emit('game_state', get_game_state(game, request.sid), room=request.sid)
 
-def schedule_demo_restart(room_id):
-    """🤖 Auto-restart for Performance Mode after a delay."""
-    socketio.sleep(4) # Faster restart for Performance Mode
-    game = games.get(room_id)
-    if game and getattr(game, 'demo_mode', False):
-        print(f"DEBUG: [DEMO] Auto-restarting game in room {room_id}...")
-        # 🚀 Bug Fix #1: Rebuild word index on every restart so AI can Hu
-        game.set_dictionary(WORDS)
-        initialize_game_start(game)
 
 
 @socketio.on('action_chi')
@@ -1034,9 +966,8 @@ def on_chi(data=None):
                     game.game_started = False
                     socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player_name, 'is_hu': True}, room=game.room_id)
                     socketio.emit('game_over', {'winner': player_name, 'melds': winning_words, 'hand': []}, room=game.room_id)
-                    socketio.emit('message', {'msg': f'🎉 {player_name} wins with automatic HU after CHI!'}, room=game.room_id)
-                    if getattr(game, 'demo_mode', False):
-                        socketio.start_background_task(schedule_demo_restart, game.room_id)
+                    socketio.emit('message', {'msg': f'🎉 {player_name} wins after CHI!'}, room=game.room_id)
+                    return
                 else:
                     socketio.emit('broadcast_meld_anim', {'word': word.upper(), 'player': player_name, 'is_hu': False}, room=game.room_id)
                     broadcast_game_state(game)
@@ -1098,8 +1029,7 @@ def on_submit_hu(data=None):
         socketio.emit('broadcast_meld_anim', {'word': ' '.join(winning_words), 'player': player.get('name'), 'is_hu': True}, room=game.room_id)
         socketio.emit('game_over', {'winner': player.get('name'), 'melds': winning_words, 'hand': []}, room=game.room_id)
         socketio.emit('message', {'msg': f'🎉 {player.get("name")} HU! ({" ".join(winning_words)})'}, room=game.room_id)
-        if getattr(game, 'demo_mode', False):
-            socketio.start_background_task(schedule_demo_restart, game.room_id)
+
     else:
         # Failure! Penalty: 1 turn. Safely restore saved state.
         prev_state = getattr(game, 'saved_state', None) or 'NORMAL'
@@ -1135,243 +1065,105 @@ def trigger_turn(game):
         'player_sid': current_player.get('sid', ''),
         'state': getattr(game, 'state', 'NORMAL')
     }, room=game.room_id)
-    
-    # 🤖 Automated AI Flow
-    if current_player.get('sid', '').startswith('ai_'):
-        dprint(f"DEBUG: [TRIGGER] Starting AI task for Player {game.current_turn} (SID: {current_player.get('sid')})")
-        socketio.start_background_task(process_ai_action, game, game.current_turn)
-        dprint(f"DEBUG: [TRIGGER] Task started for Player {game.current_turn}")
-    else:
-        dprint(f"DEBUG: [TRIGGER] Waiting for Human Player {game.current_turn} (SID: {current_player.get('sid')})")
+    if game.state == 'WAITING_ACTION' and not current_player.get('sid', '').startswith('ai_'):
+        broadcast_game_state(game)
 
-def process_ai_action(game, ai_index):
-    """
-    🧠 AI Thinking Logic:
-    1. Judge Hu (Winning) first
-    2. If WAITING_ACTION (Chi), decide whether to Chi
-    3. If NORMAL state, decide whether to use items, then discard a card
-    """
+def run_game_loop(room_id):
+    """Single permanent game loop. Drives all AI turns without timers or chains."""
+    print(f"DEBUG: [LOOP] Started for room {room_id}")
+    while True:
+        socketio.sleep(0.5)
+        game = games.get(room_id)
+        if not game or not getattr(game, 'game_started', False): break
+        if getattr(game, 'state', 'NORMAL') == 'PAUSED_FOR_HU': continue
+        current_player = game.players[game.current_turn]
+        if not current_player.get('sid', '').startswith('ai_'): continue  # human's turn, wait
+        # AI's turn
+        socketio.sleep(1.0)  # thinking delay
+        game = games.get(room_id)
+        if not game or not getattr(game, 'game_started', False): break
+        if getattr(game, 'state', 'NORMAL') == 'PAUSED_FOR_HU': continue
+        if not game.players[game.current_turn].get('sid', '').startswith('ai_'): continue
+        if not _do_ai_turn(game, game.current_turn): break
+    game = games.get(room_id)
+    if game: game.loop_active = False
+    print(f"DEBUG: [LOOP] Ended for room {room_id}")
+
+def _do_ai_turn(game, ai_index):
+    """Execute one AI turn. Returns True to continue loop, False if game ended."""
     try:
-        # Base AI thinking delay
         player = game.players[ai_index]
         difficulty = player.get('difficulty', 'normal')
-        
-        # 🚀 Hardcoded fixed delay to prevent any timer overlap bugs
-        delay = 1.0
-        socketio.sleep(delay)
-        
-        if not getattr(game, 'game_started', False): return
-        if game.current_turn != ai_index: return
-        
-        player = game.players[ai_index]
-        # 🚨 Wait up to 2s for hand to be populated (race condition guard for first turn)
-        for _ in range(20):
-            if player.get('hand'):
-                break
+
+        # Wait up to 3s for hand (first-turn race guard)
+        for _ in range(30):
+            if player.get('hand'): break
             socketio.sleep(0.1)
-        
-        if not player.get('hand'):
-            dprint(f"DEBUG: [AI_ERROR] Player {ai_index} has no hand after waiting! Advancing.")
-            game.next_turn()
-            broadcast_game_state(game)
-            trigger_turn(game)
-            return
-        difficulty = player.get('difficulty', 'normal')
-        is_demo = getattr(game, 'demo_mode', False)
-
-        # ⚡ Pre-decide whether to attempt Hu check (avoids unnecessary CPU work)
-        hu_chance = 0.001 if is_demo else {'easy': 0.05, 'normal': 0.15, 'hard': 0.35, 'nightmare': 0.75}.get(difficulty, 0.15)
-        will_check_hu = random.random() < hu_chance
-
-        # 🧠 Vocabulary Limit — smaller in demo mode for speed
-        total_words_count = len(WORDS)
-        if is_demo:
-            vocab_limit = max(1, int(total_words_count * 0.015))  # ⚡ Fixed 1.5% in demo
-        else:
-            limit_map = {
-                'easy':      max(1, int(total_words_count * 0.01)),
-                'normal':    max(1, int(total_words_count * 0.05)),
-                'hard':      max(1, int(total_words_count * 0.08)),
-                'nightmare': max(1, int(total_words_count * 0.15)),
-            }
-            vocab_limit = limit_map.get(difficulty, limit_map['normal'])
-
-        # 🎲 Build AI known words ONLY if we'll actually do Hu check
-        if will_check_hu:
-            try:
-                ai_known_words = set(random.sample(WORDS, min(vocab_limit, len(WORDS))))
-            except ValueError:
-                ai_known_words = set(WORDS)
-        else:
-            ai_known_words = None
 
         hand = player.get('hand', [])
-        
-        # Define available letter indices (pre-defined to prevent NameError)
         letter_indices = [i for i, t in enumerate(hand) if isinstance(t, dict) and t.get('type') == 'letter']
-        
-        # 0. AI Auto-Hu detection (Win priority)
         hand_letters = [t.get('value', '').lower() for t in hand if isinstance(t, dict) and t.get('type') == 'letter']
         hand_items_count = len([t for t in hand if isinstance(t, dict) and t.get('type') == 'item'])
-        
-        # 🛡️ Check for Hu (Winning) on another player's discard
+
         is_waiting_chi = (getattr(game, 'state', 'NORMAL') == 'WAITING_ACTION' and game.current_turn == ai_index)
         if is_waiting_chi and game.last_discard and game.last_discard.get('player_index') != ai_index:
             tile = game.last_discard.get('tile', {})
             if tile.get('type') == 'letter':
                 hand_letters.append(tile.get('value', '').lower())
-        
-        # ⚡ Hu check: only if pre-decided AND hand is large enough
+
+        # Hu check (low probability)
+        hu_chance = {'easy': 0.05, 'normal': 0.15, 'hard': 0.35, 'nightmare': 0.75}.get(difficulty, 0.15)
+        will_check_hu = random.random() < hu_chance
+        total_words_count = len(WORDS)
+        vocab_limit = max(1, int(total_words_count * {'easy':0.01,'normal':0.05,'hard':0.08,'nightmare':0.15}.get(difficulty, 0.05)))
+
         hu_set = None
-        target_size = len(hand_letters) + hand_items_count
-        
-        if len(player.get('hand', [])) == 0 and player.get('melds'):
-            # 🚀 Fix: If AI ate all hand tiles, it MUST Hu instantly!
+        if len(hand) == 0 and player.get('melds'):
             hu_set = []
-        elif will_check_hu and target_size >= 2 and ai_known_words:
-            is_nightmare = (difficulty == 'nightmare')
-            # ⚡ Demo mode: low recursion cap to avoid blocking eventlet loop
-            call_cap = 80 if is_demo else 400
-            hu_set = game.AI_find_hu_partition(
-                hand_letters, hand_items_count,
-                vocab_limit=vocab_limit, is_nightmare=is_nightmare,
-                known_words=ai_known_words, call_cap=call_cap
-            )
-        
+        elif will_check_hu and (len(hand_letters) + hand_items_count) >= 2:
+            try: ai_known_words = set(random.sample(WORDS, min(vocab_limit, len(WORDS))))
+            except ValueError: ai_known_words = set(WORDS)
+            hu_set = game.AI_find_hu_partition(hand_letters, hand_items_count, vocab_limit=vocab_limit,
+                is_nightmare=(difficulty=='nightmare'), known_words=ai_known_words, call_cap=400)
+
         if hu_set is not None:
             winning_words = player.get('melds', []) + hu_set
-            
-            # 🚀 If Hu on discard, remove from discard pile
             if is_waiting_chi and game.last_discard:
-                target_p_idx = game.last_discard.get('player_index')
-                if target_p_idx is not None and game.discard_piles[target_p_idx]:
-                    game.discard_piles[target_p_idx].pop()
+                p_idx = game.last_discard.get('player_index')
+                if p_idx is not None and game.discard_piles[p_idx]: game.discard_piles[p_idx].pop()
                 game.last_discard = None
-            
-            # Clear waiting action state
             game.state = 'NORMAL'
-
-            socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name', 'AI'), 'is_hu': True}, room=game.room_id)
-            socketio.emit('game_over', {'winner': player.get('name', 'AI'), 'melds': winning_words, 'hand': []}, room=game.room_id)
-            socketio.emit('message', {'msg': f'🎉 {player.get("name", "AI")} HAS WON (HU)!'}, room=game.room_id)
+            socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name','AI'), 'is_hu': True}, room=game.room_id)
+            socketio.emit('game_over', {'winner': player.get('name','AI'), 'melds': winning_words, 'hand': []}, room=game.room_id)
+            socketio.emit('message', {'msg': f'🎉 {player.get("name","AI")} HAS WON (HU)!'}, room=game.room_id)
             game.game_started = False
-            if getattr(game, 'demo_mode', False):
-                socketio.start_background_task(schedule_demo_restart, game.room_id)
-            return
+            return False
 
-        # 1. Handle WAITING_ACTION (Chi Decision)
+        # WAITING_ACTION: Chi decision
         if getattr(game, 'state', 'NORMAL') == 'WAITING_ACTION':
             options = game.get_chi_options(ai_index)
-            
-            # 🎲 Difficulty determines whether to Chi (Action probability halved)
-            # 🚀 Demo Mode: Increase Chi probability to make performance more dynamic
-            if getattr(game, 'demo_mode', False):
-                chi_skip_prob = 0.35 # 65% chance to Chi
-            else:
-                chi_skip_prob = {'easy': 0.85, 'normal': 0.65, 'hard': 0.55, 'nightmare': 0.525}.get(difficulty, 0.65)
-            
-            should_chi = random.random() > chi_skip_prob
-            
-            if options and should_chi:
-                # 🤖 AI intelligently chooses words
-                is_nightmare = (player.get('difficulty') == 'nightmare')
-                valid_options = options
-                
-                # 🌙 Nightmare Mode Filter: Exclude proper nouns
-                # (Already filtered globally from dictionary)
-                
-                if valid_options:
-                    # 🧠 Strategy based on difficulty
-                    strategy = {'easy': 'short', 'normal': 'random', 'hard': 'long', 'nightmare': 'long'}.get(difficulty, 'random')
-                    if strategy == 'long':
-                        chosen_word = max(valid_options, key=len)
-                    elif strategy == 'short':
-                        chosen_word = min(valid_options, key=len)
-                    else:
-                        chosen_word = random.choice(valid_options)
-                        
-                    success, _ = game.perform_chi(ai_index, chosen_word)
-                    if success:
-                        # 🚀 Foolproof Mechanism: If AI hand is empty after Chi, trigger HU automatically
-                        if len(player.get('hand', [])) == 0:
-                            winning_words = player.get('melds', [])
-                            game.game_started = False
-                            socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name', 'AI'), 'is_hu': True}, room=game.room_id)
-                            socketio.emit('game_over', {'winner': player.get('name', 'AI'), 'melds': winning_words, 'hand': []}, room=game.room_id)
-                            socketio.emit('message', {'msg': f'🎉 {player.get("name", "AI")} wins with automatic HU after CHI!'}, room=game.room_id)
-                            if getattr(game, 'demo_mode', False):
-                                socketio.start_background_task(schedule_demo_restart, game.room_id)
-                            return
-                            
-                        socketio.emit('broadcast_meld_anim', {'word': str(chosen_word).upper(), 'player': player.get('name', 'AI'), 'is_hu': False}, room=game.room_id)
-                        broadcast_game_state(game)
-                        trigger_turn(game)
-                        return
-                
-            dprint(f"DEBUG: [AI_SKIP] Player {ai_index} ({player.get('name')}) skipping.")
+            chi_skip_prob = {'easy':0.85,'normal':0.65,'hard':0.55,'nightmare':0.525}.get(difficulty, 0.65)
+            if options and random.random() > chi_skip_prob:
+                strategy = {'easy':'short','normal':'random','hard':'long','nightmare':'long'}.get(difficulty,'random')
+                chosen_word = (max(options,key=len) if strategy=='long' else min(options,key=len) if strategy=='short' else random.choice(options))
+                success, _ = game.perform_chi(ai_index, chosen_word)
+                if success:
+                    if len(player.get('hand', [])) == 0:
+                        winning_words = player.get('melds', [])
+                        game.game_started = False
+                        socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name','AI'), 'is_hu': True}, room=game.room_id)
+                        socketio.emit('game_over', {'winner': player.get('name','AI'), 'melds': winning_words, 'hand': []}, room=game.room_id)
+                        socketio.emit('message', {'msg': f'🎉 {player.get("name","AI")} wins after CHI!'}, room=game.room_id)
+                        return False
+                    socketio.emit('broadcast_meld_anim', {'word': chosen_word.upper(), 'player': player.get('name','AI'), 'is_hu': False}, room=game.room_id)
+                    broadcast_game_state(game)
+                    return True
             game.skip_action(ai_index)
             broadcast_game_state(game)
+            game.next_turn()
+            broadcast_game_state(game)
             trigger_turn(game)
-            return
-
-        # 2. Handle NORMAL (Items and Play)
-        if getattr(game, 'state', 'NORMAL') == 'NORMAL':
-
-            
-            if not player.get('hand'):
-                dprint(f"DEBUG: [AI_ERROR] Player {ai_index} has no hand! Advancing.")
-                game.next_turn()
-                broadcast_game_state(game)
-                trigger_turn(game)
-                return
-
-            # AI Discard
-            if not letter_indices:
-                tile_idx = 0
-            else:
-                if difficulty in ['hard', 'nightmare']:
-                    # 🧠 High Difficulty AI: Prioritize discarding rare/hard letters
-                    counts = Counter([str(t.get('value', '')) for t in hand if isinstance(t, dict) and t.get('type') == 'letter'])
-                    least_common = counts.most_common()[-1][0] if counts else None
-                    
-                    rare_letters = "QXZJKV" 
-                    hand_rare = [i for i in letter_indices if hand[i].get('value', '') in rare_letters]
-                    if hand_rare:
-                        tile_idx = random.choice(hand_rare)
-                    else:
-                        tile_idx = next((i for i, t in enumerate(hand) if isinstance(t, dict) and t.get('type') == 'letter' and t.get('value') == least_common), random.choice(letter_indices))
-                else:
-                    # 🎮 Low Difficulty AI: Hesitant to discard letters
-                    rare_letters = "QXZJKV"
-                    common_indices = [i for i in letter_indices if hand[i].get('value', '') not in rare_letters]
-                    if common_indices and random.random() < 0.35:
-                        tile_idx = random.choice(common_indices)
-                    else:
-                        tile_idx = random.choice(letter_indices)
-
-            tile_val = str(hand[tile_idx].get('value', '?'))
-            dprint(f"DEBUG: [AI_DISCARD] Player {ai_index} ({difficulty}) discarding index {tile_idx} ({tile_val})")
-            if game.discard(ai_index, tile_idx):
-                socketio.emit('message', {'msg': f'🤖 {player.get("name", "AI")} discarded {tile_val}'}, room=game.room_id)
-                
-                # 🚀 Bug Fix: If AI discards their last tile, they win automatically
-                if len(player.get('hand', [])) == 0:
-                    winning_words = player.get('melds', [])
-                    game.game_started = False
-                    socketio.emit('broadcast_meld_anim', {'word': " ".join(winning_words), 'player': player.get('name', 'AI'), 'is_hu': True}, room=game.room_id)
-                    socketio.emit('game_over', {'winner': player.get('name', 'AI'), 'melds': winning_words, 'hand': []}, room=game.room_id)
-                    socketio.emit('message', {'msg': f'🎉 {player.get("name", "AI")} wins by discarding their last tile!'}, room=game.room_id)
-                    if getattr(game, 'demo_mode', False):
-                        socketio.start_background_task(schedule_demo_restart, game.room_id)
-                    return
-                
-                game.next_turn()
-                broadcast_game_state(game)
-                trigger_turn(game)
-            else:
-                game.next_turn()
-                broadcast_game_state(game)
-                trigger_turn(game)
+            return True
 
     except Exception as e:
         print(f"CRITICAL: [AI_TASK_ERROR] {e}")
@@ -1405,7 +1197,7 @@ def get_game_state(game, sid, include_hands=None):
         'state': getattr(game, 'state', 'NORMAL'),
         'my_hand': [],
         'is_spectator': is_spectator,
-        'is_performance_mode': getattr(game, 'is_performance_mode', False), # 🚀 Sync flag to frontend
+        'is_performance_mode': False,
         'room_id': getattr(game, 'room_id', 'unknown'),
         'can_hu': False,  # 🎯 HU detection flag
         'hu_declaring_player': getattr(game, 'hu_declaring_player', None)
