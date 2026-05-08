@@ -934,7 +934,7 @@ def on_start_demo(data=None):
                 'protected_turns': 0, 
                 'penalty_turns': 0,
                 'difficulty': 'normal', 
-                'vocab_limit': int(total_words * 0.04), # 4% for demo/performance (lowered to extend game)
+                'vocab_limit': int(total_words * 0.015), # 1.5% for demo/performance (lowered to extend game)
                 'bank_time': 0.0, # Disable bank time jump in Demo
                 'turn_time': 20.0
             })
@@ -1177,13 +1177,13 @@ def process_ai_action(game, ai_index):
         is_demo = getattr(game, 'demo_mode', False)
 
         # ⚡ Pre-decide whether to attempt Hu check (avoids unnecessary CPU work)
-        hu_chance = 0.05 if is_demo else {'easy': 0.05, 'normal': 0.15, 'hard': 0.35, 'nightmare': 0.75}.get(difficulty, 0.15)
+        hu_chance = 0.001 if is_demo else {'easy': 0.05, 'normal': 0.15, 'hard': 0.35, 'nightmare': 0.75}.get(difficulty, 0.15)
         will_check_hu = random.random() < hu_chance
 
         # 🧠 Vocabulary Limit — smaller in demo mode for speed
         total_words_count = len(WORDS)
         if is_demo:
-            vocab_limit = max(1, int(total_words_count * 0.04))  # ⚡ Fixed 4% in demo
+            vocab_limit = max(1, int(total_words_count * 0.015))  # ⚡ Fixed 1.5% in demo
         else:
             limit_map = {
                 'easy':      max(1, int(total_words_count * 0.01)),
