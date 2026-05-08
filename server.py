@@ -1643,11 +1643,7 @@ def run_game_timer_loop(room_id):
         elif player['bank_time'] > 0:
             player['bank_time'] -= 0.1
         else:
-            # ⏰ Time out! Force a random discard (unless it's Demo Mode)
-            if getattr(game, 'demo_mode', False) or player.get('sid', '').startswith('ai_'):
-                # 🤖 AI in Demo mode should NOT be forced to move by the timer
-                player['turn_time'] = 20.0 # Just reset it visually
-                continue
+            # ⏰ Time out! Force a random discard
 
             dprint(f"DEBUG: [TIMER] Player {active_idx} timed out! Auto-discarding.")
             if game.state == 'WAITING_ACTION':
