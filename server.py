@@ -887,6 +887,44 @@ def on_start(data=None):
         print(f"DEBUG: [START] CRITICAL - No game found for sid {request.sid} or room {request_room}")
         socketio.emit('error', {'msg': 'Failed to start game: Room not found. Please try refreshing.'}, room=request.sid)
 
+@socketio.on('start_demo_mode')
+def on_start_demo(data=None):
+    room_id = data.get('room') if data else None
+    if not room_id: return
+    
+    join_room(room_id)
+    sid_to_room[request.sid] = room_id
+    
+    if room_id not in games:
+        games[room_id] = EnglishMahjongGame()
+        games[room_id].set_dictionary(WORDS)
+        games[room_id].room_id = room_id
+    
+    game = games[room_id]
+    game.spectators.add(request.sid)
+    game.is_performance_mode = True
+    
+    # 🚀 Auto-fill with 4 AIs for performance mode
+    ai_names = ["AI East", "AI South", "AI West", "AI North"]
+    for i in range(4):
+        game.players.append({
+            'name': ai_names[i],
+            'sid': f"ai_demo_{i}",
+            'hand': [],
+            'melds': [],
+            'hand_size': 0,
+            'wrong_moves': 0,
+            'protected_turns': 0,
+            'penalty_turns': 0,
+            'difficulty': 'hard', # Make them smart
+            'vocab_limit': int(len(WORDS) * 0.1),
+            'bank_time': 60.0,
+            'turn_time': 20.0,
+            'can_hu': False
+        })
+    
+    print(f"DEBUG: [DEMO] Starting Demo Mode in room {room_id}")
+    initialize_game_start(game)
 
 
 # Discard Action Handler
@@ -1074,17 +1112,38 @@ def run_game_loop(room_id):
     while True:
         socketio.sleep(0.5)
         game = games.get(room_id)
-        if not game or not getattr(game, 'game_started', False): break
+        if not game: break
+        
+        # 🚀 Auto-restart for Performance/Demo mode
+        if not getattr(game, 'game_started', False):
+            if getattr(game, 'is_performance_mode', False):
+                socketio.sleep(5.0)  # Wait 5 seconds on the result screen before restarting
+                game = games.get(room_id)
+                if game and getattr(game, 'is_performance_mode', False):
+                    print(f"DEBUG: [DEMO] Auto-restarting game in room {room_id}")
+                    initialize_game_start(game)
+            else:
+                break
+            continue
+
         if getattr(game, 'state', 'NORMAL') == 'PAUSED_FOR_HU': continue
         current_player = game.players[game.current_turn]
         if not current_player.get('sid', '').startswith('ai_'): continue  # human's turn, wait
+        
         # AI's turn
-        socketio.sleep(1.0)  # thinking delay
+        ai_speed = getattr(game, 'ai_interval', 1.5)
+        if getattr(game, 'is_performance_mode', False):
+            ai_speed = 1.5 # Lock at 1.5s for demo mode
+            
+        socketio.sleep(ai_speed)  # thinking delay
+        
         game = games.get(room_id)
-        if not game or not getattr(game, 'game_started', False): break
+        if not game or not getattr(game, 'game_started', False): continue
         if getattr(game, 'state', 'NORMAL') == 'PAUSED_FOR_HU': continue
         if not game.players[game.current_turn].get('sid', '').startswith('ai_'): continue
-        if not _do_ai_turn(game, game.current_turn): break
+        
+        _do_ai_turn(game, game.current_turn)
+        
     game = games.get(room_id)
     if game: game.loop_active = False
     print(f"DEBUG: [LOOP] Ended for room {room_id}")
@@ -1160,6 +1219,21 @@ def _do_ai_turn(game, ai_index):
                     return True
             game.skip_action(ai_index)
             broadcast_game_state(game)
+            game.next_turn()
+            broadcast_game_state(game)
+            trigger_turn(game)
+            return True
+
+        # 🚀 NORMAL action: Discard
+        if getattr(game, 'state', 'NORMAL') == 'NORMAL':
+            if letter_indices:
+                discard_idx = random.choice(letter_indices)
+            elif hand:
+                discard_idx = 0
+            else:
+                return True
+                
+            game.discard(ai_index, discard_idx)
             game.next_turn()
             broadcast_game_state(game)
             trigger_turn(game)

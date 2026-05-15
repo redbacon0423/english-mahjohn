@@ -968,6 +968,8 @@ socket.on('game_state', (state) => {
     } else if (state.game_started && isActuallyInGame) {
         document.getElementById('waiting-overlay').classList.add('hidden');
         document.getElementById('table-start-overlay').classList.add('hidden');
+        const resOverlay = document.getElementById('result-overlay');
+        if (resOverlay) resOverlay.classList.add('hidden');
         if (menu) menu.classList.add('hidden');
         // document.getElementById('game-status-panel').classList.remove('hidden');
     }
