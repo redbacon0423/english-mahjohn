@@ -301,17 +301,6 @@ class EnglishMahjongGame:
                     break # Prioritize the first player who can act in turn order
         
         if not found_action:
-            # 🛡️ Handle Penalty Turns
-            loops = 0
-            while self.players[self.current_turn].get('penalty_turns', 0) > 0 and loops < len(self.players):
-                self.players[self.current_turn]['penalty_turns'] -= 1
-                penalized_player_name = self.players[self.current_turn].get('name', 'Unknown')
-                dprint(f"DEBUG: [NEXT_TURN] Player {self.current_turn} skipped due to penalty.")
-                # We need to emit via socketio, but self doesn't have it directly. Luckily socketio is global in server.py
-                socketio.emit('message', {'msg': f"🚫 {penalized_player_name} is suspended for this turn!"}, room=getattr(self, 'room_id', ''))
-                self.current_turn = (self.current_turn + 1) % len(self.players)
-                loops += 1
-
             # Normal: draw tile for the naturally next player
             self.state = 'NORMAL'
             new_tile = self.draw_tile()
@@ -666,12 +655,6 @@ class EnglishMahjongGame:
         memo[hand_key] = None
         return None
 
- 
-
-    def register_wrong_move(self, player_index):
-        if 0 <= player_index < len(self.players):
-            self.players[player_index]['penalty_turns'] = self.players[player_index].get('penalty_turns', 0) + 1
-
 
 # ==========================================
 # 🌐 Flask Routes & SocketIO Events
@@ -1011,11 +994,7 @@ def on_chi(data=None):
                     broadcast_game_state(game)
                     trigger_turn(game)
             else:
-                game.register_wrong_move(player_index)
-                game.skip_action(player_index)
-                socketio.emit('error', {'msg': f'CHI Failed ({word.upper()}): {err_msg} Turn skipped!'}, room=request.sid) # type: ignore
-                broadcast_game_state(game)
-                trigger_turn(game)
+                socketio.emit('error', {'msg': f'CHI Failed ({word.upper()}): {err_msg}'}, room=request.sid) # type: ignore
 
 @socketio.on('action_skip')
 def on_skip(data=None):
@@ -1069,14 +1048,13 @@ def on_submit_hu(data=None):
         socketio.emit('message', {'msg': f'🎉 {player.get("name")} HU! ({" ".join(winning_words)})'}, room=game.room_id)
 
     else:
-        # Failure! Penalty: 1 turn. Safely restore saved state.
+        # Failure! Safely restore saved state.
         prev_state = getattr(game, 'saved_state', None) or 'NORMAL'
         game.state = prev_state
         game.hu_declaring_player = None
-        game.register_wrong_move(player_index)
-        fail_msg = '🚨 胡牌失敗！暫停一回合行動。' if words_str else '❌ 取消胡牌。暫停一回合行動。'
+        fail_msg = '🚨 胡牌失敗！' if words_str else '❌ 取消胡牌。'
         socketio.emit('error', {'msg': fail_msg}, room=request.sid)
-        socketio.emit('message', {'msg': f'{fail_msg.split("。")[0]} ({player.get("name")})'}, room=game.room_id)
+        socketio.emit('message', {'msg': f'{fail_msg} ({player.get("name")})'}, room=game.room_id)
         broadcast_game_state(game)
         trigger_turn(game)
 
