@@ -11,11 +11,8 @@
 - [系統架構](#系統架構)
 - [遊戲玩法](#遊戲玩法)
 - [AI 系統](#ai-系統)
-- [安裝與執行](#安裝與執行)
+- [線上遊玩](#線上遊玩)
 - [專案結構](#專案結構)
-- [部署](#部署)
-- [Socket.IO API 參考](#socketio-api-參考)
-- [設定參數](#設定參數)
 
 ---
 
@@ -158,14 +155,6 @@ AI 的胡牌判斷使用**遞迴回溯法（Recursive Backtracking）搭配記�
 4. 若手牌字母足夠組成某候選詞，扣除使用的字母後遞迴處理剩餘手牌。
 5. 基底情況：所有字母耗盡 → 胡牌成立；否則回溯嘗試下一候選詞。
 
-**效能保護措施：**
-
-- 雙重索引結構（字元索引 + 長度索引），候選詞查詢為 O(1)
-- 詞頻排序，常用詞優先嘗試
-- 每層遞迴候選詞上限 30 個，防止橫向搜尋爆炸
-- 全域呼叫次數上限（預設 400 次），避免伺服器卡頓
-- 定期呼叫 `eventlet.sleep(0)` 讓出事件循環控制權
-
 ---
 
 ## 線上遊玩
@@ -199,71 +188,3 @@ majan/
     ├── word_frequencies.json  # 詞頻排序清單（供 AI 難度使用）
     └── themes.json            # 主題詞彙包（選配功能）
 ```
-
----
-
-## 部署
-
-本專案針對 **Render** 雲端平台進行設定。
-
-**Build 指令：**
-```bash
-pip install -r requirements.txt
-```
-
-**Start 指令：**
-```bash
-gunicorn --worker-class eventlet -w 1 server:app
-```
-
-**環境變數：**
-
-| 變數 | 必要 | 說明 |
-|---|---|---|
-| `PORT` | Render 自動提供 | 伺服器監聽埠 |
-| `GEMINI_API_KEY` | 選配 | 啟用 Gemini 主題詞彙驗證 |
-
-線上版本：[english-mahjohn.onrender.com](https://english-mahjohn.onrender.com)
-
----
-
-## Socket.IO API 參考
-
-### 客戶端 → 伺服器
-
-| 事件 | 承載資料 | 說明 |
-|---|---|---|
-| `join` | `{ room, username, mode, role, difficulty }` | 加入或建立房間 |
-| `start_game` | `{ room }` | 觸發遊戲開始 |
-| `discard` | `{ tile_index }` | 依索引打出一張手牌 |
-| `action_chi` | `{ word }` | 以單字宣告吃牌 |
-| `action_skip` | — | 放棄吃牌或胡牌機會 |
-| `declare_hu` | — | 暫停遊戲並宣告胡牌 |
-| `submit_hu` | `{ words }` | 提交獲勝單字組合 |
-| `reorder_hand` | `{ hand }` | 同步手牌排列順序 |
-| `chat_message` | `{ username, msg }` | 廣播聊天訊息 |
-| `add_ai` | — | 在大廳中手動加入 AI 玩家 |
-
-### 伺服器 → 客戶端
-
-| 事件 | 承載資料 | 說明 |
-|---|---|---|
-| `game_state` | 完整狀態物件 | 權威性遊戲狀態同步 |
-| `my_hand` | `{ hand }` | 玩家個人手牌更新（私有） |
-| `turn_update` | `{ current_turn, player_sid, state }` | 當前行動玩家通知 |
-| `game_over` | `{ winner, melds, hand }` | 對局結束，含獲勝者資訊 |
-| `broadcast_meld_anim` | `{ word, player, is_hu }` | 觸發吃牌或胡牌動畫 |
-| `message` | `{ msg }` | 系統廣播訊息 |
-| `error` | `{ msg }` | 操作錯誤回饋 |
-| `chat_message` | `{ username, msg, pos_index }` | 聊天訊息廣播 |
-
----
-
-## 設定參數
-
-| 常數 | 位置 | 預設值 | 說明 |
-|---|---|---|---|
-| `GLOBAL_DEBUG` | `server.py` | `False` | 啟用詳細伺服器日誌 |
-| `ai_interval` | `EnglishMahjongGame` | `5.0s` | AI 每次行動的思考延遲 |
-| `call_cap` | `AI_find_hu_partition` | `400` | 每次胡牌檢查的最大遞迴呼叫數 |
-| `COMMON_LETTERS` | `server.py` | `A–W 排除 Q,X,Z,J,Y` | 隨機出牌限制的字母池 |
