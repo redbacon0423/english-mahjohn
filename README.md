@@ -169,51 +169,11 @@ AI 的胡牌判斷使用**遞迴回溯法（Recursive Backtracking）搭配記�
 
 ---
 
-## 安裝與執行
+## 線上遊玩
 
-### 環境需求
+本專案已部署至雲端，無需本機安裝即可直接遊玩：
 
-- Python 3.10 以上
-
-### 安裝步驟
-
-```bash
-# 建立並啟用虛擬環境
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS / Linux
-
-# 安裝依賴套件
-pip install -r requirements.txt
-```
-
-### Gemini API Key 設定（選配）
-
-在專案根目錄建立 `gemini_key.txt`，將 API Key 貼入：
-
-```
-AIza...
-```
-
-或設定環境變數：
-
-```bash
-export GEMINI_API_KEY="AIza..."
-```
-
-### 啟動伺服器
-
-```bash
-python server.py
-```
-
-伺服器預設監聽 `http://0.0.0.0:5001`。啟動後終端機會顯示區域網路位址：
-
-```
-* Server running on LAN: http://192.168.1.x:5001
-```
-
-同一網路內的裝置可直接導覽至該位址加入遊戲。
+👉 **[立即遊玩 English Mahjong](https://english-mahjohn.onrender.com/)**
 
 ---
 
