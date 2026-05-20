@@ -55,7 +55,6 @@ graph TD
         SIOd["Flask-SocketIO\nWebSocket 處理"]
         Game["EnglishMahjongGame\n遊戲狀態與規則引擎"]
         AI["AI Engine\n遞迴詞彙分割演算法"]
-        Gemini["Gemini API\n主題詞彙驗證（選配）"]
         Data["words.json\nword_frequencies.json"]
     end
 
@@ -63,7 +62,6 @@ graph TD
     SIOd --> Game
     Game --> AI
     AI --> Data
-    Game -.-> Gemini
 ```
 
 ### 後端
@@ -73,7 +71,6 @@ graph TD
 | Web 框架 | Flask |
 | 即時通訊 | Flask-SocketIO（WebSocket） |
 | 非同步事件循環 | Eventlet |
-| AI 主題驗證 | Google Gemini API *（選配）* |
 | 執行環境 | Python 3.10+ |
 
 ### 前端
@@ -185,6 +182,5 @@ majan/
     ├── js/
     │   └── game.js            # 客戶端遊戲邏輯與 Socket.IO 整合
     ├── words.json             # 英文字典（約 30 萬筆詞彙）
-    ├── word_frequencies.json  # 詞頻排序清單（供 AI 難度使用）
-    └── themes.json            # 主題詞彙包（選配功能）
+    └── word_frequencies.json  # 詞頻排序清單（供 AI 難度使用）
 ```
