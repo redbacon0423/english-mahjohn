@@ -1,25 +1,19 @@
 import sys
 
-# Auto-detect if Gunicorn has already loaded/monkey-patched gevent or eventlet
+# Auto-detect if Gunicorn has already loaded/monkey-patched eventlet
 _async_mode = None
 
 if 'eventlet' in sys.modules:
     _async_mode = 'eventlet'
-elif 'gevent' in sys.modules:
-    _async_mode = 'gevent'
 else:
     # Local running fallback: apply monkey-patching manually
     try:
-        from gevent import monkey  # type: ignore
-        monkey.patch_all()
-        _async_mode = 'gevent'
+        import eventlet  # type: ignore
+        eventlet.monkey_patch()
+        _async_mode = 'eventlet'
     except ImportError:
-        try:
-            import eventlet  # type: ignore
-            eventlet.monkey_patch()
-            _async_mode = 'eventlet'
-        except ImportError:
-            _async_mode = 'threading'
+        _async_mode = 'threading'
+
 
 import os
 import json
