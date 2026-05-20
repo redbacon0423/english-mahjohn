@@ -1,7 +1,7 @@
 try:
-    import eventlet # type: ignore
-    eventlet.monkey_patch()
-    _async_mode = 'eventlet'
+    from gevent import monkey # type: ignore
+    monkey.patch_all()
+    _async_mode = 'gevent'
 except ImportError:
     _async_mode = 'threading'
 
