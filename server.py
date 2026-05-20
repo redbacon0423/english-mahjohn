@@ -1,18 +1,26 @@
-import sys
+# Apply warning suppression and eventlet monkey-patching at the absolute beginning before any other imports
+import warnings
+warnings.filterwarnings("ignore", category=Warning)
 
-# Auto-detect if Gunicorn has already loaded/monkey-patched eventlet
-_async_mode = None
+import logging
+original_logger_error = logging.Logger.error
 
-if 'eventlet' in sys.modules:
+def _suppress_greening_warning(self, msg, *args, **kwargs):
+    if isinstance(msg, str) and "were not greened" in msg:
+        return
+    return original_logger_error(self, msg, *args, **kwargs)
+
+logging.Logger.error = _suppress_greening_warning
+
+_async_mode = 'threading'
+try:
+    import eventlet  # type: ignore
+    eventlet.monkey_patch()
     _async_mode = 'eventlet'
-else:
-    # Local running fallback: apply monkey-patching manually
-    try:
-        import eventlet  # type: ignore
-        eventlet.monkey_patch()
-        _async_mode = 'eventlet'
-    except ImportError:
-        _async_mode = 'threading'
+except ImportError:
+    pass
+
+import sys
 
 
 import os
