@@ -89,34 +89,34 @@ graph TD
 為確保即時多人對戰遊戲的流暢度與公平性，系統將核心邏輯集中於後端，並透過 WebSocket 連線同步至前端。以下是系統的核心決策與資料處理流程：
 
 ```mermaid
-flowchart TD
+flowchart LR
     %% Define Styles
     classDef startEnd fill:#f9f,stroke:#333,stroke-width:2px;
     classDef process fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
     classDef branch fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000;
     classDef merge fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
     
-    Start([遊戲動作觸發]) --> ActionHandler[Socket.IO 接收玩家動作]
-    ActionHandler --> ActionBranch{動作類型判斷}
+    Start([動作觸發]) --> ActionHandler[Socket.IO 接收動作]
+    ActionHandler --> ActionBranch{動作類型}
     
-    ActionBranch -->|出牌 Discard| DiscardFlow[暫存出牌並計算吃胡選項]
-    ActionBranch -->|吃牌 CHI| ChiFlow[扣除手牌並移至副露區 Melds]
-    ActionBranch -->|胡牌 HU| HuFlow[宣告胡牌並暫停遊戲計時]
+    ActionBranch -->|出牌 Discard| DiscardFlow[暫存出牌並計算吃胡]
+    ActionBranch -->|吃牌 CHI| ChiFlow[扣牌移至副露區]
+    ActionBranch -->|胡牌 HU| HuFlow[宣告胡牌暫停計時]
     
-    DiscardFlow --> VerifyMerge[合併：更新局勢狀態]
+    DiscardFlow --> VerifyMerge[合併更新狀態]
     ChiFlow --> VerifyMerge
     HuFlow --> VerifyMerge
     
-    VerifyMerge --> WordEngine{拼字與字典驗證}
+    VerifyMerge --> WordEngine{字典驗證}
     
-    WordEngine -->|吃牌/胡牌| DictCheck[比對 30 萬筆 words.json 字典]
-    WordEngine -->|胡牌專屬| MatchCheck[檢查手牌字母是否完全耗盡]
+    WordEngine -->|吃/胡| DictCheck[比對 words.json 字典]
+    WordEngine -->|胡牌| MatchCheck[檢查字母是否耗盡]
     
-    DictCheck --> SyncMerge[合併：判定處理完畢]
+    DictCheck --> SyncMerge[判定處理完畢]
     MatchCheck --> SyncMerge
     
-    SyncMerge --> Broadcast[將最新狀態廣播給所有玩家]
-    Broadcast --> Render([前端網頁 game.js 即時渲染畫面])
+    SyncMerge --> Broadcast[廣播狀態給玩家]
+    Broadcast --> Render([前端即時渲染])
     
     %% Apply styles
     class Start,Render startEnd;
