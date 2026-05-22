@@ -48,19 +48,13 @@
 
 ```mermaid
 flowchart TD
-    classDef step fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
-    classDef action fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000;
-    classDef win fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
-
-    Setup[1. 開局持有 16 張牌] --> Draw[2. 輪流自動摸牌]
-    Draw --> Action{選擇行動}
-    Action -->|雙擊| Discard[3. 打出手牌] --> Draw
-    Action -->|吃牌| Chi[3. 截取上家組單字] --> Draw
-    Action -->|胡牌| Win[4. 全手牌合規 HU 獲勝]
+    classDef box fill:#f5f5f7,stroke:#d2d2d7,stroke-width:2px,color:#1d1d1f;
+    classDef win fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1d1d1f;
     
-    class Setup,Draw step;
-    class Action,Discard,Chi action;
-    class Win win;
+    A[發牌] --> B[出牌 / 摸牌 / 吃牌] --> C[胡牌]
+    
+    class A,B box;
+    class C win;
 ```
 
 1. `[摸牌與出牌]`：自動摸牌，雙擊打出
