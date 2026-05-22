@@ -18,7 +18,7 @@
 
 支援三種遊戲模式：
 
-- **單人模式** — 一名玩家對抗三隻 AI 對手，可自選 AI 難度
+- **單人模式** — 一名玩家對抗三隻電腦模擬對手，可自選難度
 - **多人模式** — 最多四名玩家共用一個房間，掃 QR Code 即可加入
 - **Host 展示模式** — 全牌面公開的旁觀者視角，專為投影大螢幕展示設計
 
@@ -62,7 +62,7 @@
 
 ------
 
-## AI 對手系統
+## 電腦對手系統
 
 ### 難度等級
 
@@ -73,14 +73,14 @@
 | 🟠 Advanced | 10%（約 30,000 字） | 35% | 偏好長單字 |
 | 🔴 Ultimate | 20%（約 60,000 字） | 75% | 偏好長單字 |
 
-<< AI 每次行動會從 30 萬筆字典中隨機「想起」一部分單字，難度越高認識越多
+<< 電腦對手每次行動會從 30 萬筆字典中隨機「想起」一部分單字，難度越高認識越多
 
 　
 
 ### 核心演算法：遞迴詞彙分割
 
 > [!info]
-> AI 的胡牌判斷使用**遞迴回溯法（Recursive Backtracking）搭配記憶化（Memoisation）**：
+> 電腦對手的胡牌判斷使用**遞迴回溯法（Recursive Backtracking）搭配記憶化（Memoisation）**：
 >
 > 1. 取手牌中第一個字母，透過預建的字元／長度**雙重索引**查詢候選單字
 > 2. 依難度對候選詞進行詞彙量過濾（從字庫隨機抽樣）
@@ -99,7 +99,7 @@
 　
 
 > [!warning]
-> Ultimate 難度的 AI 胡牌觸發機率高達 **75%**，且偏好拼出長單字，是非常難以擊敗的對手！
+> Ultimate 難度的電腦對手胡牌觸發機率高達 **75%**，且偏好拼出長單字，是非常難以擊敗的對手！
 
 ------
 
@@ -112,7 +112,7 @@
 | Web 框架 | Python / Flask |
 | 即時通訊 | Flask-SocketIO（WebSocket）|
 | 非同步事件循環 | Eventlet |
-| AI 主題詞彙驗證 | Google Gemini API（選配）|
+| 詞彙主題驗證 | Google Gemini API（選配）|
 
 ### 前端
 
@@ -130,7 +130,7 @@
 | 資料 | 說明 |
 | --- | --- |
 | `words.json` | 英文字典，約 30 萬筆詞彙 |
-| `word_frequencies.json` | 詞頻排序清單，供 AI 難度系統使用 |
+| `word_frequencies.json` | 詞頻排序清單，供電腦對手難度設定使用 |
 
 　
 
@@ -139,10 +139,83 @@
 
 ------
 
+## 核心處理流程（Process）
+
+為確保即時多人對戰遊戲的流暢度與公平性，系統將核心邏輯（吃牌、胡牌、AI 決策、狀態更新）集中於後端，並透過 WebSocket 連線同步至前端。以下是系統的核心決策與資料處理流程：
+
+```mermaid
+flowchart TD
+    %% Define Styles
+    classDef startEnd fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef process fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
+    classDef branch fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000;
+    classDef merge fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
+    
+    Start([玩家打出字母牌]) --> Prep[更新遊戲狀態並暫存出牌 last_discard]
+    Prep --> Decision1{檢查玩家反應}
+    
+    Decision1 -->|所有人| HuCheck[胡牌快取檢查: 判定是否可榮和 Ron]
+    Decision1 -->|僅限下家| ChiCheck[吃牌檢查: 計算可吃牌組成之單字]
+    
+    HuCheck --> Merge1[合流：進入 WAITING_ACTION 狀態]
+    ChiCheck --> Merge1
+    
+    Merge1 --> ActionDecision{根據玩家動作分支}
+    
+    ActionDecision -->|宣告吃牌 CHI| ChiProcess[吃牌處理]
+    ActionDecision -->|宣告胡牌 HU| HuProcess[胡牌驗證與求解]
+    ActionDecision -->|跳過 / 超時 SKIP| SkipProcess[跳過處理]
+    
+    %% Chi branch
+    subgraph ChiBranch [吃牌處理程序]
+        ChiProcess --> ChiV[字典驗證: 是否為合法單字]
+        ChiV --> ChiD[扣除手牌字母，將單字移至副露 Melds]
+        ChiD --> ChiT[轉為該吃牌玩家回合，狀態設為 NORMAL]
+    end
+    
+    %% Hu branch
+    subgraph HuBranch [胡牌驗證與求解程序]
+        HuProcess --> HuSplit{驗證來源}
+        HuSplit -->|玩家手動輸入| HuManual["正規表達式提取單字<br/>比對 30 萬筆 words.json 字典"]
+        HuSplit -->|電腦對手 / 快取| HuAI["AI 遞迴回溯法求解器<br/>AI_find_hu_partition"]
+        
+        HuAI --> HuAIEngine["字元與長度雙重索引檢索<br/>難度字彙抽樣與記憶化剪枝"]
+        
+        HuManual --> HuMerge[合流：檢查手牌字母及萬用牌是否完美匹配且無剩餘]
+        HuAIEngine --> HuMerge
+        
+        HuMerge --> HuVerifyResult{驗證結果}
+        HuVerifyResult -->|成功| HuWin["宣告遊戲結束 game_over<br/>播放 canvas-confetti 勝利動畫"]
+        HuVerifyResult -->|失敗| HuFail[駁回胡牌，恢復遊戲]
+    end
+    
+    %% Skip branch
+    subgraph SkipBranch [跳過/超時處理程序]
+        SkipProcess --> SkipClear[清除 last_discard 出牌快取]
+        SkipClear --> SkipDraw[該玩家摸牌並更新 can_hu 快取]
+        SkipDraw --> SkipNext[輪到下一順位玩家，狀態設為 NORMAL]
+    end
+    
+    ChiT --> Merge2[合流：廣播最新遊戲狀態]
+    HuWin --> EndGame([遊戲結束])
+    HuFail --> SkipNext
+    SkipNext --> Merge2
+    
+    Merge2 --> ClientRender[前端 game.js 接收 WebSocket 事件並渲染畫面]
+    
+    %% Apply styles
+    class Start,EndGame startEnd;
+    class Prep,ChiV,ChiD,ChiT,HuManual,HuAIEngine,HuMerge,SkipClear,SkipDraw,SkipNext,ClientRender process;
+    class Decision1,ActionDecision,HuSplit,HuVerifyResult branch;
+    class Merge1,Merge2,HuFail,HuWin merge;
+```
+
+------
+
 ## 功能特色
 
 - [x] 即時多人連線（Socket.IO WebSocket）
-- [x] 四段難度 AI 對手（遞迴回溯演算法）
+- [x] 四段難度電腦模擬對手（遞迴回溯演算法）
 - [x] Host / TV 旁觀者展示模式
 - [x] 吃牌（CHI）與胡牌（HU）宣告機制
 - [x] 伺服器端字典驗證（防止輸入非英文單字）
