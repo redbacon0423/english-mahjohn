@@ -122,23 +122,13 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    %% Define Styles
-    classDef startEnd fill:#f5f5f7,stroke:#d2d2d7,stroke-width:2px,color:#1d1d1f;
-    classDef process fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#1d1d1f;
-    classDef branch fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#1d1d1f;
+    classDef box fill:#f5f5f7,stroke:#d2d2d7,stroke-width:2px,color:#1d1d1f;
     classDef win fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1d1d1f;
     
-    A([開始]) --> B[1. 發牌 <br/>每人持有 16 張字母手牌]
-    B --> C[2. 摸牌 / 吃牌 <br/>輪流自動摸牌，或吃上家的出牌組成單字]
-    C --> D[3. 出牌 <br/>雙擊打出一張牌，保持手牌張數]
-    D --> E{手牌字母<br/>是否已能全部<br/>拼成英文單字？}
-    E -->|否| C
-    E -->|是| F([4. 胡牌 HU <br/>宣告獲勝])
+    A[1. 發牌 16張] --> B[2. 摸牌 / 吃牌] --> C[3. 出牌] --> D[4. 胡牌]
     
-    class A,F startEnd;
-    class B,C,D process;
-    class E branch;
-    class F win;
+    class A,B,C box;
+    class D win;
 ```
 
 > [!tip]
