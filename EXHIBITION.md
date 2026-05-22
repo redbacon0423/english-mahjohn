@@ -150,35 +150,33 @@ flowchart TD
     classDef branch fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000;
     classDef merge fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
     
-    Start([遊戲開始與初始化]) --> Init[發牌 16 張與建立字典快取]
-    Init --> TurnDecision[遊戲回合運作處理]
+    Start([遊戲動作觸發]) --> ActionHandler[Socket.IO 接收玩家動作]
+    ActionHandler --> ActionBranch{動作類型判斷}
     
-    TurnDecision --> DiscardProc[出牌與摸牌動作處理]
-    TurnDecision --> ChiOption[吃牌 CHI 候選單字計算]
-    TurnDecision --> HuVerify[胡牌 HU 條件判定]
-    TurnDecision --> AIDecision[電腦對手 AI 難度決策]
+    ActionBranch -->|出牌 Discard| DiscardFlow[暫存出牌並計算吃胡選項]
+    ActionBranch -->|吃牌 CHI| ChiFlow[扣除手牌並移至副露區 Melds]
+    ActionBranch -->|胡牌 HU| HuFlow[宣告胡牌並暫停遊戲計時]
     
-    DiscardProc --> MergeState[合流：更新玩家手牌與牌局狀態]
-    ChiOption --> MergeState
-    HuVerify --> MergeState
-    AIDecision --> MergeState
+    DiscardFlow --> VerifyMerge[合併：更新局勢狀態]
+    ChiFlow --> VerifyMerge
+    HuFlow --> VerifyMerge
     
-    MergeState --> EngineCheck[後端規則引擎驗證]
+    VerifyMerge --> WordEngine{拼字與字典驗證}
     
-    EngineCheck --> DictCheck[30 萬筆 words.json 字典比對]
-    EngineCheck --> Backtrack[遞迴回溯法進行胡牌求解]
-    EngineCheck --> RankCheck[依難度篩選常用詞彙比例]
+    WordEngine -->|吃牌/胡牌| DictCheck[比對 30 萬筆 words.json 字典]
+    WordEngine -->|胡牌專屬| MatchCheck[檢查手牌字母是否完全耗盡]
     
-    DictCheck --> Broadcast[合流：後端狀態判定完畢]
-    Backtrack --> Broadcast
-    RankCheck --> Broadcast
+    DictCheck --> SyncMerge[合併：判定處理完畢]
+    MatchCheck --> SyncMerge
     
-    Broadcast --> Render[透過 Socket.IO 即時同步至前端網頁渲染]
+    SyncMerge --> Broadcast[將最新狀態廣播給所有玩家]
+    Broadcast --> Render([前端網頁 game.js 即時渲染畫面])
     
     %% Apply styles
-    class Start startEnd;
-    class Init,MergeState,EngineCheck,Broadcast,Render process;
-    class DiscardProc,ChiOption,HuVerify,AIDecision,DictCheck,Backtrack,RankCheck branch;
+    class Start,Render startEnd;
+    class ActionHandler,DiscardFlow,ChiFlow,HuFlow,DictCheck,MatchCheck,Broadcast process;
+    class ActionBranch,WordEngine branch;
+    class VerifyMerge,SyncMerge merge;
 ```
 
 ------
