@@ -58,26 +58,7 @@ English Mahjong 以英文 26 個字母取代傳統麻將牌。字母張數依照
 
 ## 系統架構
 
-```mermaid
-graph TD
-    subgraph Client["瀏覽器（客戶端）"]
-        HTML["HTML + Vanilla CSS"]
-        JS["game.js"]
-        SIOc["Socket.IO Client 4.x"]
-    end
-
-    subgraph Server["Flask 後端  server.py"]
-        SIOd["Flask-SocketIO\nWebSocket 處理"]
-        Game["EnglishMahjongGame\n遊戲狀態與規則引擎"]
-        BOT["電腦對手引擎\n遞迴詞彙分割演算法"]
-        Data["words.json\nword_frequencies.json"]
-    end
-
-    SIOc -- WebSocket --> SIOd
-    SIOd --> Game
-    Game --> BOT
-    BOT --> Data
-```
+![系統架構圖](https://raw.githubusercontent.com/redbacon0423/english-mahjohn/main/architecture.png)
 
 ### 後端
 
@@ -103,33 +84,7 @@ graph TD
 
 為確保即時多人對戰遊戲的流暢度與公平性，系統將核心邏輯集中於後端，並透過 WebSocket 連線同步至前端。以下是系統的核心決策與資料處理流程：
 
-```mermaid
-flowchart TD
-    %% Define Styles
-    classDef startEnd fill:#f9f,stroke:#333,stroke-width:2px;
-    classDef process fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
-    classDef branch fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000;
-    classDef merge fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
-    
-    Start([遊戲動作觸發]) --> ActionHandler[Socket.IO 接收動作]
-    ActionHandler --> ActionBranch{動作類型}
-    
-    ActionBranch -->|出牌 Discard| DiscardFlow[暫存出牌並計算吃胡選項]
-    ActionBranch -->|吃牌 CHI| ChiFlow[扣除手牌並移至副露區]
-    ActionBranch -->|胡牌 HU| HuFlow[宣告胡牌並暫停遊戲]
-    
-    DiscardFlow --> VerifyMerge[後端字典與規則驗證]
-    ChiFlow --> VerifyMerge
-    HuFlow --> VerifyMerge
-    
-    VerifyMerge --> Broadcast([即時廣播狀態並渲染畫面])
-    
-    %% Apply styles
-    class Start,Broadcast startEnd;
-    class ActionHandler,DiscardFlow,ChiFlow,HuFlow process;
-    class ActionBranch branch;
-    class VerifyMerge merge;
-```
+![核心處理流程圖](https://raw.githubusercontent.com/redbacon0423/english-mahjohn/main/process.png)
 
 ---
 
@@ -137,19 +92,10 @@ flowchart TD
 
 遊戲以 26 個英文字母取代傳統麻將，每位玩家開局持有 **16 張牌**，輪流摸牌與出牌，最先拼完手牌者獲勝。
 
-```mermaid
-flowchart TD
-    classDef box fill:#f5f5f7,stroke:#d2d2d7,stroke-width:2px,color:#1d1d1f;
-    classDef win fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1d1d1f;
-    
-    A[1. 發牌 16張] --> B[2. 摸牌 / 吃牌] --> C[3. 出牌] --> D[4. 胡牌]
-    
-    class A,B,C box;
-    class D win;
-```
+![使用方式流程圖](https://raw.githubusercontent.com/redbacon0423/english-mahjohn/main/usage.png)
 
 > [!tip]
-> 💡 簡報或 Canva 使用，可直接下載專案根目錄的高畫質圖檔：**[SVG 向量圖 (usage.svg)](usage.svg)** | **[PNG 高畫質圖 (usage.png)](usage.png)**
+> 💡 簡報或 Canva 使用，可直接下載專案根目錄的高畫質圖檔：**[SVG 向量圖 (usage.svg)](https://raw.githubusercontent.com/redbacon0423/english-mahjohn/main/usage.svg)** | **[PNG 高畫質圖 (usage.png)](https://raw.githubusercontent.com/redbacon0423/english-mahjohn/main/usage.png)**
 
 
 1. `[摸牌與出牌]`：自動摸牌，雙擊打出
