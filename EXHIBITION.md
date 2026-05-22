@@ -48,14 +48,28 @@
 
 ```mermaid
 flowchart TD
-    classDef box fill:#f5f5f7,stroke:#d2d2d7,stroke-width:2px,color:#1d1d1f;
+    %% Define Styles
+    classDef startEnd fill:#f5f5f7,stroke:#d2d2d7,stroke-width:2px,color:#1d1d1f;
+    classDef process fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#1d1d1f;
+    classDef branch fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#1d1d1f;
     classDef win fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1d1d1f;
     
-    A[發牌] --> B[出牌 / 摸牌 / 吃牌] --> C[胡牌]
+    A([開始]) --> B[1. 發牌 <br/>每人持有 16 張字母手牌]
+    B --> C[2. 摸牌 / 吃牌 <br/>輪流自動摸牌，或吃上家的出牌組成單字]
+    C --> D[3. 出牌 <br/>雙擊打出一張牌，保持手牌張數]
+    D --> E{手牌字母<br/>是否已能全部<br/>拼成英文單字？}
+    E -->|否| C
+    E -->|是| F([4. 胡牌 HU <br/>宣告獲勝])
     
-    class A,B box;
-    class C win;
+    class A,F startEnd;
+    class B,C,D process;
+    class E branch;
+    class F win;
 ```
+
+> [!tip]
+> 💡 簡報或 Canva 使用，可直接下載專案根目錄的高畫質圖檔：**[SVG 向量圖 (usage.svg)](usage.svg)** | **[PNG 高畫質圖 (usage.png)](usage.png)**
+
 
 1. `[摸牌與出牌]`：自動摸牌，雙擊打出
    - 回合開始時自動摸一張牌，雙擊手牌確認打出，防止誤觸。
