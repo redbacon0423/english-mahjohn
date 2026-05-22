@@ -43,22 +43,24 @@
 
 ------
 
-## 回合流程
+## 使用方式（Usage）
 
-每一回合分為以下四個階段：
+遊戲以 26 個英文字母取代傳統麻將，每位玩家開局持有 **16 張牌**，輪流摸牌與出牌，最先拼完手牌者獲勝。
 
-1. **摸牌**：當前玩家從牌堆頂端自動抽一張字母牌
-2. **出牌**：選一張不需要的手牌打出（點兩下確認，防止誤觸）
-3. **反應階段**：其他玩家在此時機可以選擇
-    - 🈁 **吃牌 CHI** — 下家可截取此牌，與手牌湊成合法英文單字放入組合區
-    - 🏆 **胡牌 HU** — 任意玩家若能以此牌完成手牌拼字，可按下 HU 宣告
-    - ➡️ **跳過 SKIP** — 放棄此回合的行動機會
-4. **胡牌驗證**：宣告 HU 後全場暫停，輸入所有獲勝單字，由伺服器比對字典確認
+1. `[摸牌與出牌]`：自動摸牌，雙擊打出
+   - 回合開始時自動摸一張牌，雙擊手牌確認打出，防止誤觸。
+   - 支援滑鼠與觸控拖曳手牌，自由調整排序。
 
-　
+2. `[吃牌 CHI]`：截取上家，組合單字
+   - 當上家出牌時，若能與手牌組成合法單字即可宣告吃牌。
+   - 吃牌所組成的英文單字將會移入副露區（公開展示）。
 
-> [!tip]
-> 胡牌按鈕**常駐**於畫面，不限只在反應階段使用——只要你認為手牌可以全部拼完，隨時都可以宣告！
+3. `[胡牌 HU]`：全手牌合法，宣告獲勝
+   - 手牌（含副露單字）必須能夠恰好組合成合法的英文字典詞彙，且不能多餘。
+   - 可在任何時機按下胡牌按鈕宣告 HU，由伺服器進行字典驗證。
+
+4. `[萬用牌 Item]`：百搭字母，精確匹配
+   - 摸牌時有機率抽到萬用牌，以 1:1 的比例代替缺少的任何字元。
 
 ------
 
@@ -141,7 +143,7 @@
 
 ## 核心處理流程（Process）
 
-為確保即時多人對戰遊戲的流暢度與公平性，系統將核心邏輯（吃牌、胡牌、AI 決策、狀態更新）集中於後端，並透過 WebSocket 連線同步至前端。以下是系統的核心決策與資料處理流程：
+為確保即時多人對戰遊戲的流暢度與公平性，系統將核心邏輯集中於後端，並透過 WebSocket 連線同步至前端。以下是系統的核心決策與資料處理流程：
 
 ```mermaid
 flowchart TD
@@ -151,78 +153,50 @@ flowchart TD
     classDef branch fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000;
     classDef merge fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
     
-    Start([玩家打出字母牌]) --> Prep[更新遊戲狀態並暫存出牌 last_discard]
-    Prep --> Decision1{檢查玩家反應}
+    Start([遊戲開始與初始化]) --> Init[發牌 16 張與建立字典快取]
+    Init --> TurnDecision[遊戲回合運作處理]
     
-    Decision1 -->|所有人| HuCheck[胡牌快取檢查: 判定是否可榮和 Ron]
-    Decision1 -->|僅限下家| ChiCheck[吃牌檢查: 計算可吃牌組成之單字]
+    TurnDecision --> DiscardProc[出牌與摸牌動作處理]
+    TurnDecision --> ChiOption[吃牌 CHI 候選單字計算]
+    TurnDecision --> HuVerify[胡牌 HU 條件判定]
+    TurnDecision --> AIDecision[電腦對手 AI 難度決策]
     
-    HuCheck --> Merge1[合流：進入 WAITING_ACTION 狀態]
-    ChiCheck --> Merge1
+    DiscardProc --> MergeState[合流：更新玩家手牌與牌局狀態]
+    ChiOption --> MergeState
+    HuVerify --> MergeState
+    AIDecision --> MergeState
     
-    Merge1 --> ActionDecision{根據玩家動作分支}
+    MergeState --> EngineCheck[後端規則引擎驗證]
     
-    ActionDecision -->|宣告吃牌 CHI| ChiProcess[吃牌處理]
-    ActionDecision -->|宣告胡牌 HU| HuProcess[胡牌驗證與求解]
-    ActionDecision -->|跳過 / 超時 SKIP| SkipProcess[跳過處理]
+    EngineCheck --> DictCheck[30 萬筆 words.json 字典比對]
+    EngineCheck --> Backtrack[遞迴回溯法進行胡牌求解]
+    EngineCheck --> RankCheck[依難度篩選常用詞彙比例]
+    EngineCheck --> Wildcard[使用萬用牌替代任意字母]
     
-    %% Chi branch
-    subgraph ChiBranch [吃牌處理程序]
-        ChiProcess --> ChiV[字典驗證: 是否為合法單字]
-        ChiV --> ChiD[扣除手牌字母，將單字移至副露 Melds]
-        ChiD --> ChiT[轉為該吃牌玩家回合，狀態設為 NORMAL]
-    end
+    DictCheck --> Broadcast[合流：後端狀態判定完畢]
+    Backtrack --> Broadcast
+    RankCheck --> Broadcast
+    Wildcard --> Broadcast
     
-    %% Hu branch
-    subgraph HuBranch [胡牌驗證與求解程序]
-        HuProcess --> HuSplit{驗證來源}
-        HuSplit -->|玩家手動輸入| HuManual["正規表達式提取單字<br/>比對 30 萬筆 words.json 字典"]
-        HuSplit -->|電腦對手 / 快取| HuAI["AI 遞迴回溯法求解器<br/>AI_find_hu_partition"]
-        
-        HuAI --> HuAIEngine["字元與長度雙重索引檢索<br/>難度字彙抽樣與記憶化剪枝"]
-        
-        HuManual --> HuMerge[合流：檢查手牌字母及萬用牌是否完美匹配且無剩餘]
-        HuAIEngine --> HuMerge
-        
-        HuMerge --> HuVerifyResult{驗證結果}
-        HuVerifyResult -->|成功| HuWin["宣告遊戲結束 game_over<br/>播放 canvas-confetti 勝利動畫"]
-        HuVerifyResult -->|失敗| HuFail[駁回胡牌，恢復遊戲]
-    end
-    
-    %% Skip branch
-    subgraph SkipBranch [跳過/超時處理程序]
-        SkipProcess --> SkipClear[清除 last_discard 出牌快取]
-        SkipClear --> SkipDraw[該玩家摸牌並更新 can_hu 快取]
-        SkipDraw --> SkipNext[輪到下一順位玩家，狀態設為 NORMAL]
-    end
-    
-    ChiT --> Merge2[合流：廣播最新遊戲狀態]
-    HuWin --> EndGame([遊戲結束])
-    HuFail --> SkipNext
-    SkipNext --> Merge2
-    
-    Merge2 --> ClientRender[前端 game.js 接收 WebSocket 事件並渲染畫面]
+    Broadcast --> Render[透過 Socket.IO 即時同步至前端網頁渲染]
     
     %% Apply styles
-    class Start,EndGame startEnd;
-    class Prep,ChiV,ChiD,ChiT,HuManual,HuAIEngine,HuMerge,SkipClear,SkipDraw,SkipNext,ClientRender process;
-    class Decision1,ActionDecision,HuSplit,HuVerifyResult branch;
-    class Merge1,Merge2,HuFail,HuWin merge;
+    class Start startEnd;
+    class Init,MergeState,EngineCheck,Broadcast,Render process;
+    class DiscardProc,ChiOption,HuVerify,AIDecision,DictCheck,Backtrack,RankCheck,Wildcard branch;
 ```
 
 ------
 
 ## 功能特色
 
-- [x] 即時多人連線（Socket.IO WebSocket）
-- [x] 四段難度電腦模擬對手（遞迴回溯演算法）
-- [x] Host / TV 旁觀者展示模式
-- [x] 吃牌（CHI）與胡牌（HU）宣告機制
-- [x] 伺服器端字典驗證（防止輸入非英文單字）
-- [x] 資訊隱藏（對手看不到你的手牌）
-- [x] 回合計時器
-- [x] 拖拉排牌（可自由調整手牌順序）
-- [x] 合成音效與勝利動畫
+- 🎮 **即時多人連線**：基於 Socket.IO WebSocket 技術，實現毫秒級多人即時連線同步
+- 🤖 **四段難度電腦對手**：Beginner 至 Ultimate 難度，使用字典隨機抽樣演算法模擬真實詞彙量
+- 📺 **旁觀者與 Host 展示模式**：支援全公開唯讀視角，完美適用於大螢幕投影或展覽主持
+- 🈁 **吃牌（CHI）與胡牌（HU）機制**：無縫融合傳統麻將規則與 30 萬筆英文單字字典驗證
+- 🔒 **資訊安全隱藏**：對手手牌與吃牌選項均在後端安全驗證，徹底杜絕客戶端作弊
+- 🧩 **拖拉排牌與萬用牌道具**：整合 Pointer Events API 提供流暢的手牌拖曳體驗，並支援萬用牌（Item）代替任意字母
+- 🎨 **動態音效與勝利特效**：整合 Web Audio API 即時合成音效，並在胡牌時觸發 canvas-confetti 慶祝動畫
 
 ------
 
