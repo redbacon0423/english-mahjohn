@@ -59,9 +59,6 @@
    - 手牌（含副露單字）必須能夠恰好組合成合法的英文字典詞彙，且不能多餘。
    - 可在任何時機按下胡牌按鈕宣告 HU，由伺服器進行字典驗證。
 
-4. `[萬用牌 Item]`：百搭字母，精確匹配
-   - 摸牌時有機率抽到萬用牌，以 1:1 的比例代替缺少的任何字元。
-
 ------
 
 ## 電腦對手系統
@@ -171,19 +168,17 @@ flowchart TD
     EngineCheck --> DictCheck[30 萬筆 words.json 字典比對]
     EngineCheck --> Backtrack[遞迴回溯法進行胡牌求解]
     EngineCheck --> RankCheck[依難度篩選常用詞彙比例]
-    EngineCheck --> Wildcard[使用萬用牌替代任意字母]
     
     DictCheck --> Broadcast[合流：後端狀態判定完畢]
     Backtrack --> Broadcast
     RankCheck --> Broadcast
-    Wildcard --> Broadcast
     
     Broadcast --> Render[透過 Socket.IO 即時同步至前端網頁渲染]
     
     %% Apply styles
     class Start startEnd;
     class Init,MergeState,EngineCheck,Broadcast,Render process;
-    class DiscardProc,ChiOption,HuVerify,AIDecision,DictCheck,Backtrack,RankCheck,Wildcard branch;
+    class DiscardProc,ChiOption,HuVerify,AIDecision,DictCheck,Backtrack,RankCheck branch;
 ```
 
 ------
@@ -195,7 +190,7 @@ flowchart TD
 - 📺 **旁觀者與 Host 展示模式**：支援全公開唯讀視角，完美適用於大螢幕投影或展覽主持
 - 🈁 **吃牌（CHI）與胡牌（HU）機制**：無縫融合傳統麻將規則與 30 萬筆英文單字字典驗證
 - 🔒 **資訊安全隱藏**：對手手牌與吃牌選項均在後端安全驗證，徹底杜絕客戶端作弊
-- 🧩 **拖拉排牌與萬用牌道具**：整合 Pointer Events API 提供流暢的手牌拖曳體驗，並支援萬用牌（Item）代替任意字母
+- 🧩 **手牌拖拉排序**：整合 Pointer Events API 提供流暢且自由的手牌拖曳排列體驗
 - 🎨 **動態音效與勝利特效**：整合 Web Audio API 即時合成音效，並在胡牌時觸發 canvas-confetti 慶祝動畫
 
 ------
